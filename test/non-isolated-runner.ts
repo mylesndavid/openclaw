@@ -74,7 +74,6 @@ const DIAGNOSTIC_EVENT_LISTENER_PRESENCE = Symbol.for(
 );
 const SESSION_SUSPENSION_TEST_API = Symbol.for("openclaw.sessionSuspensionTestApi");
 const SECRET_REDACTION_TEST_API = Symbol.for("openclaw.secretRedactionRegistryTestApi");
-const TASK_REGISTRY_TEST_API = Symbol.for("openclaw.taskRegistryTestApi");
 const SESSION_MCP_RUNTIME_MANAGER = Symbol.for("openclaw.sessionMcpRuntimeManager");
 const RETAINED_MCP_MANAGERS = Symbol.for("openclaw.nonIsolatedRetainedMcpManagers");
 // Shared-worker scoped: the registry lives on the worker global, not in the module graph.
@@ -305,10 +304,6 @@ type SecretRedactionTestApi = {
   resetSecretRedactionRegistryForTest?: () => void;
 };
 
-type TaskRegistryTestApi = {
-  resetTaskRegistryForTests?: () => void;
-};
-
 function runCleanupActions(actions: CleanupAction[]): unknown {
   let firstError: unknown;
   for (const action of actions) {
@@ -415,12 +410,6 @@ function resetOpenClawSecretRedactionState(): void {
   const globalStore = globalThis as Record<PropertyKey, unknown>;
   const api = globalStore[SECRET_REDACTION_TEST_API] as SecretRedactionTestApi | undefined;
   api?.resetSecretRedactionRegistryForTest?.();
-}
-
-function resetOpenClawTaskRegistryState(): void {
-  const globalStore = globalThis as Record<PropertyKey, unknown>;
-  const api = globalStore[TASK_REGISTRY_TEST_API] as TaskRegistryTestApi | undefined;
-  api?.resetTaskRegistryForTests?.();
 }
 
 async function retireSessionMcpRuntimeManager(): Promise<void> {
@@ -615,7 +604,6 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
     if (!(await drain("singleton lifecycle", () => drainSqliteTestSingletons(recordFailure)))) {
       retainSqliteTestCustody();
     }
-    clean("task registry", resetOpenClawTaskRegistryState);
     clean("secret redaction", resetOpenClawSecretRedactionState);
     if (!this.config.isolate) {
       for (const [phase, run] of [
