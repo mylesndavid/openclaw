@@ -17,9 +17,8 @@ struct ChatSessionSidebar: View {
     @Binding var query: String
     @Binding var groups: [OpenClawChatSessionGroup]
     let previews: ChatSessionSidebarPreviews
+    let menuActions: ChatSessionSidebarActions
     var additionalAttentionRequests: [OpenClawChatAttentionRequest] = []
-    @Environment(\.openClawChatWindowCommands) var menuCommands
-    @State var groupMenuConnection: OpenClawSessionMenuConnection?
     @State var menuPresentation: ChatSessionIconPicker?
     @State var presentedAttention: OpenClawChatAttentionPresentation?
     @State var sessionPendingDeletion: OpenClawChatSessionEntry?

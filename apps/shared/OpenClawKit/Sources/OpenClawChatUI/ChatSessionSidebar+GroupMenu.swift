@@ -6,9 +6,9 @@ extension ChatSessionSidebar {
     func groupMenu(_ name: String) -> some View {
         Group {
             Button("Rename…") { self.viewModel.promptSidebarGroup(name: name) }
-                .disabled(self.groupMenuConnection?.allows("sessions.groups.rename") != true)
+                .disabled(self.menuActions.connection?.allows("sessions.groups.rename") != true)
             Button("New group…") { self.viewModel.promptSidebarGroup() }
-                .disabled(self.groupMenuConnection?.allows("sessions.groups.put") != true)
+                .disabled(self.menuActions.connection?.allows("sessions.groups.put") != true)
             Divider()
             Button("Delete…", role: .destructive) {
                 self.viewModel.performSidebarAction {
@@ -21,8 +21,8 @@ extension ChatSessionSidebar {
                     guard alert.runModal() == .alertFirstButtonReturn else { return }
                     self.groups = try await self.viewModel.deleteSessionGroup(name, using: lease)
                 }
-            }.disabled(self.groupMenuConnection?.allows("sessions.groups.delete") != true)
-        }.task { self.groupMenuConnection = try? await self.menuCommands?.sessionMenuConnection?() }
+            }.disabled(self.menuActions.connection?.allows("sessions.groups.delete") != true)
+        }
     }
 }
 

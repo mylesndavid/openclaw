@@ -3,7 +3,6 @@ import AppKit
 import Observation
 import OpenClawKit
 import OpenClawProtocol
-import SwiftUI
 
 @MainActor
 public struct OpenClawSessionMenuConnection {
@@ -76,67 +75,89 @@ final class ChatSessionSidebarActions {
         }
     }
 
-    var connection: OpenClawSessionMenuConnection?
-    var owners: [Owner] = []
+    let connection: OpenClawSessionMenuConnection?
+    private var profiles: [Profile]?
+    private var selfID: String?
+    private var worktrees: [WorktreeRecord] = []
     var directoryError: String?
     var loadingOwners = false
-    var worktreePath: String?
+    @ObservationIgnored private(set) var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var nextRefresh: ContinuousClock.Instant?
 
-    func load(
-        session: OpenClawChatSessionEntry, agents: [OpenClawChatAgentChoice],
-        acquire: (() async throws -> OpenClawSessionMenuConnection)?) async
-    {
-        self.connection = nil
-        self.worktreePath = nil
-        do {
-            guard let acquire else { throw OpenClawChatTransportSendError.notDispatched }
-            let connection = try await acquire()
-            self.connection = connection
-            await self.loadOwners(session: session, agents: agents)
-            // ui/src/components/session-menu-work.ts:51: loopback alone cannot prove locality (SSH tunnels).
-            if connection.local, session.execNode == nil, let id = session.worktree?.id {
-                let result: WorktreesListResult = try await connection.read("worktrees.list")
-                self.worktreePath = result.worktrees.first { $0.id == id && $0.removedat == nil }?.path
-            }
-        } catch {
-            if self.connection == nil { self.directoryError = error.localizedDescription }
-        }
+    init(connection: OpenClawSessionMenuConnection? = nil) {
+        self.connection = connection
+        self.selfID = connection?.selfProfileID
     }
 
-    func loadOwners(session: OpenClawChatSessionEntry, agents: [OpenClawChatAgentChoice]) async {
-        guard let connection, !self.loadingOwners else { return }
-        self.loadingOwners = true
-        defer { self.loadingOwners = false }
+    @discardableResult
+    func refresh(at now: ContinuousClock.Instant = .now, ifStale: Bool = false) -> Task<Void, Never>? {
+        if let refreshTask { return refreshTask }
+        guard let connection, connection.isCurrent() else { return nil }
+        if ifStale, let nextRefresh, now < nextRefresh { return nil }
+        // Rate-limit failed automatic attempts too; read-triggered rerenders must not create a retry loop.
+        self.nextRefresh = now.advanced(by: .seconds(60))
+        self.refreshTask = Task {
+            self.loadingOwners = true
+            await self.loadOwners()
+            // ui/src/components/session-menu-work.ts:51: loopback cannot prove locality (SSH tunnels).
+            if connection.local, let result: WorktreesListResult = try? await connection.read("worktrees.list"),
+               connection.isCurrent(), !Task.isCancelled { self.worktrees = result.worktrees }
+            self.loadingOwners = false
+            self.refreshTask = nil
+        }
+        return self.refreshTask
+    }
+
+    func worktreePath(for session: OpenClawChatSessionEntry, at now: ContinuousClock.Instant = .now) -> String? {
+        self.refresh(at: now, ifStale: true)
+        guard self.connection?.isCurrent() == true, session.execNode == nil, let id = session.worktree?.id else {
+            return nil
+        }
+        return self.worktrees.first { $0.id == id && $0.removedat == nil }?.path
+    }
+
+    private func loadOwners() async {
+        guard let connection else { return }
         struct Directory: Decodable { let profiles: [Profile] }
         struct SelfProfile: Decodable { let profile: Profile }
-        var humans: [Owner] = []
-        let current = session.owner?.actor
-        let currentID = Self.ownerID(current)
-        if current?.type == "human", let currentID {
-            humans = [.init(type: "human", key: currentID, label: current?.label ?? currentID)]
-        }
         let me = try? await (connection.read("users.self") as SelfProfile).profile
-        let selfID = me?.id ?? connection.selfProfileID
+        var profiles: [Profile]?
         var directoryError: String?
         do {
             let directory: Directory = try await connection.read("users.list")
-            humans = directory.profiles.filter { $0.mergedInto == nil }.map { profile in
-                let label = ChatPayloadDecoding.trimmedNonEmptyString(profile.displayName) ??
-                    profile.githubIdentity?.login ?? profile.emails.first ?? profile.id
-                return .init(type: "human", key: profile.id, label: label)
-            }
+            profiles = directory.profiles.filter { $0.mergedInto == nil }
         } catch { directoryError = error.localizedDescription }
         guard connection.isCurrent(), !Task.isCancelled else { return }
+        self.selfID = me?.id ?? self.selfID
+        self.profiles = profiles ?? self.profiles
         self.directoryError = directoryError
+    }
+
+    func owners(
+        session: OpenClawChatSessionEntry,
+        agents: [OpenClawChatAgentChoice],
+        at now: ContinuousClock.Instant = .now) -> [Owner]
+    {
+        self.refresh(at: now, ifStale: true)
+        var humans: [Owner] = self.profiles?.map { profile in
+            let label = ChatPayloadDecoding.trimmedNonEmptyString(profile.displayName) ??
+                profile.githubIdentity?.login ?? profile.emails.first ?? profile.id
+            return Owner(type: "human", key: profile.id, label: label)
+        } ?? []
+        let current = session.owner?.actor
+        if self.profiles == nil, current?.type == "human", let id = Self.ownerID(current) {
+            humans = [.init(type: "human", key: id, label: current?.label ?? id)]
+        }
         // ui/src/components/session-owner-menu.ts:59: retain the known owner on directory failure; Me leads.
-        self.owners = (humans.filter { $0.key != selfID } + agents.map {
+        var owners = (humans.filter { $0.key != self.selfID } + agents.map {
             Owner(type: "agent", key: $0.id, label: $0.displayName)
         }).sorted {
             if $0.type != $1.type { return $0.type < $1.type }
             let order = $0.label.localizedCompare($1.label)
             return order == .orderedSame ? $0.key < $1.key : order == .orderedAscending
         }
-        if let selfID { self.owners.insert(.init(type: "human", key: selfID, label: String(localized: "Me")), at: 0) }
+        if let selfID { owners.insert(.init(type: "human", key: selfID, label: String(localized: "Me")), at: 0) }
+        return owners
     }
 
     static func canMoveToGroup(_ row: OpenClawChatSessionEntry, mainKeys: [String]) -> Bool {

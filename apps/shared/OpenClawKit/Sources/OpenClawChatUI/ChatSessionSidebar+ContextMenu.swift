@@ -26,7 +26,7 @@ extension ChatSessionSidebar {
         session.agentId = OpenClawChatSessionKey.agentID(from: session.key) ??
             self.viewModel.sessionMutationTarget(key: session.key, agentID: session.agentId).agentID
         return ChatSessionSidebarRowMenu(
-            viewModel: self.viewModel, session: session, groups: self.groups,
+            viewModel: self.viewModel, session: session, groups: self.groups, actions: self.menuActions,
             inspect: { self.inspectedSession = session },
             rename: {
                 self.renameText = session.label ?? session.displayName ?? ""
@@ -41,12 +41,11 @@ private struct ChatSessionSidebarRowMenu: View {
     @Bindable var viewModel: OpenClawChatViewModel
     let session: OpenClawChatSessionEntry
     let groups: [OpenClawChatSessionGroup]
+    let actions: ChatSessionSidebarActions
     let inspect: () -> Void
     let rename: () -> Void
     let delete: () -> Void
     let present: (ChatSessionIconPicker) -> Void
-    @Environment(\.openClawChatWindowCommands) private var menuCommands
-    @State private var actions = ChatSessionSidebarActions()
 
     var body: some View {
         Group {
@@ -145,10 +144,6 @@ private struct ChatSessionSidebarRowMenu: View {
             self.button(String(localized: "Get Info…"), "info.circle", action: self.inspect)
         }
         .font(OpenClawChatTypography.body(size: 13, weight: .regular, relativeTo: .body))
-        .task { await self.actions.load(
-            session: self.session,
-            agents: self.viewModel.agentChoices,
-            acquire: self.menuCommands?.sessionMenuConnection) }
     }
 
     private var groupMenu: some View {
@@ -177,7 +172,7 @@ private struct ChatSessionSidebarRowMenu: View {
 
     private var ownerMenu: some View {
         Menu("Assign to…") {
-            ForEach(self.actions.owners) { owner in
+            ForEach(self.actions.owners(session: self.session, agents: self.viewModel.agentChoices)) { owner in
                 let checked = self.session.owner?.actor.type == owner.type && ChatSessionSidebarActions
                     .ownerID(self.session.owner?.actor) == owner.key
                 Button {
@@ -199,9 +194,10 @@ private struct ChatSessionSidebarRowMenu: View {
             if let error = self.actions.directoryError {
                 Text(error)
                 Button("Retry directory") {
-                    Task { await self.actions.loadOwners(session: self.session, agents: self.viewModel.agentChoices) }
+                    self.actions.refresh()
                 }.disabled(self.actions.loadingOwners)
-            } else if self.actions.owners.isEmpty { Text("Loading…") }
+            } else if self.actions.owners(session: self.session, agents: self.viewModel.agentChoices)
+                .isEmpty { Text("Loading…") }
         }.disabled(self.actions.connection?.allows("sessions.assignOwner") != true)
     }
 
@@ -230,7 +226,7 @@ private struct ChatSessionSidebarRowMenu: View {
         Menu("Open in") {
             Button("New window") { self.actions.connection?.openWindow(self.session) }
                 .disabled(self.actions.connection?.isCurrent() != true)
-            if let path = self.actions.worktreePath {
+            if let path = self.actions.worktreePath(for: self.session) {
                 Divider()
                 ForEach(
                     [("cursor", "Cursor"), ("vscode", "VS Code"), ("windsurf", "Windsurf"), ("zed", "Zed")],
