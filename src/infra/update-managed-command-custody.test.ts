@@ -54,14 +54,29 @@ describe.skipIf(process.platform === "win32")("managed command process custody",
   it("retains live authority while a managed command binds and releases every reservation on normal completion", async () => {
     const f = fixture();
     const parents = f.roots.map((root) => {
-      const result = f.store.acquire(root, "parent", { kind: "update" });
+      const result = f.store.acquire(root, "command", { kind: "update" });
       if (result.kind !== "acquired") {
         throw new Error("Missing parent fixture");
       }
       return result.lease;
     });
+    const delegated = parents.map((parent) => {
+      const result = f.store.acquire(
+        `${parent.key}/.openclaw-update-child-delegated`,
+        "command",
+        { kind: "update" },
+        false,
+        undefined,
+        parent,
+      );
+      if (result.kind !== "acquired") {
+        throw new Error("Missing delegated fixture");
+      }
+      return result.lease;
+    });
     const retained = createManagedCommandProcessCustody({
-      roots: f.roots.map((root) => `${root}/.openclaw-update-child-delegated`),
+      roots: delegated.map((parent) => parent.key),
+      parents: delegated,
       runId: "command",
       assertCurrent() {
         for (const parent of parents) {
@@ -81,7 +96,7 @@ describe.skipIf(process.platform === "win32")("managed command process custody",
             timeoutMs: 10_000,
             input: "finish",
             beforeInput(pid) {
-              const commands = f.rows().filter((row) => row.owner === "command");
+              const commands = f.rows().filter((row) => row.install_root.endsWith("-command"));
               expect(commands).toHaveLength(f.roots.length);
               for (const row of commands) {
                 expect(JSON.parse(row.payload_json)).toMatchObject({
@@ -97,7 +112,12 @@ describe.skipIf(process.platform === "win32")("managed command process custody",
     );
     expect(result.code).toBe(0);
     expect(result.stdout).toBe("owned");
-    expect(f.rows().filter((row) => row.owner === "command")).toEqual([]);
+    expect(f.rows().filter((row) => row.install_root.endsWith("-command"))).toEqual([]);
+    retained.releaseAnchors();
+    for (const parent of [...parents, ...delegated]) {
+      expect(f.store.current(parent)).toBe(true);
+    }
+    expect(f.store.releaseAll(delegated)).toBe(true);
     expect(f.store.releaseAll(parents)).toBe(true);
   });
 
@@ -107,7 +127,7 @@ describe.skipIf(process.platform === "win32")("managed command process custody",
     expect(retained.databasePath).toBe(f.databasePath);
     expect(f.rows()).toEqual([]);
     const reservation = retained.custody.reserve([process.execPath, "--version"]);
-    expect(f.rows()).toHaveLength(f.roots.length);
+    expect(f.rows()).toHaveLength(f.roots.length * 2);
     for (const row of f.rows()) {
       const current = f.store.read(row.install_root);
       if (current.kind !== "current") {
@@ -120,6 +140,11 @@ describe.skipIf(process.platform === "win32")("managed command process custody",
       expect(f.store.acquire(root, "next", { kind: "update" }).kind).toBe("busy");
     }
     reservation.settled();
+    expect(f.rows()).toHaveLength(f.roots.length);
+    for (const root of f.roots) {
+      expect(f.store.acquire(root, "next", { kind: "update" }).kind).toBe("busy");
+    }
+    retained.releaseAnchors();
     expect(f.rows()).toEqual([]);
     for (const root of f.roots) {
       const acquired = f.store.acquire(root, "next", { kind: "update" });
@@ -151,7 +176,9 @@ describe.skipIf(process.platform === "win32")("managed command process custody",
         throw new Error("Missing tracked child PID");
       }
       const pendingRoot = path.join(f.directory, "pending");
-      const namespaces = f.roots.map((root) => `${root}/.openclaw-update-child-delegated`);
+      const namespaces = f.roots
+        .slice(0, -1)
+        .map((root) => `${root}/.openclaw-update-child-delegated`);
       const child = path.join(f.directory, "custody-owner.mts");
       fs.writeFileSync(
         child,
@@ -160,15 +187,22 @@ import { createManagedCommandProcessCustody } from ${JSON.stringify(new URL("./u
 import { createManagedHandoffLeaseStore } from ${JSON.stringify(new URL("./update-managed-service-handoff-lease.ts", import.meta.url).href)};
 const store = createManagedHandoffLeaseStore();
 const parents = [];
+const delegated = [];
 for (const root of ${JSON.stringify(f.roots.slice(0, -1))}) {
   const admitted = store.acquire(root, "old-root", {kind:"update"});
   if (admitted.kind !== "acquired") throw new Error("Root fixture failed");
   parents.push(admitted.lease);
+  const child = store.acquire(root + "/.openclaw-update-child-delegated", "doctor", {kind:"update"}, false, undefined, admitted.lease);
+  if (child.kind !== "acquired") throw new Error("Delegated fixture failed");
+  delegated.push(child.lease);
 }
-const command = createManagedCommandProcessCustody({ roots: ${JSON.stringify(namespaces)}, runId: "tracked-owner", assertCurrent() {
+const command = createManagedCommandProcessCustody({ roots: ${JSON.stringify(namespaces)}, parents: delegated, runId: "tracked-owner", assertCurrent() {
   if (parents.some((lease) => !store.owns(lease, "executor"))) throw new Error("Fixture authority changed");
 } });
 command.custody.reserve([process.execPath, "-e", "process.stdin.resume()"]).spawned({pid: ${holder.pid}, startedAt: null});
+// Reopen an orphan produced before canonical anchors existed, without using the new producer.
+const orphan = store.acquire(${JSON.stringify(`${f.roots.at(-1)!}/.openclaw-update-child-historical-command`)}, "tracked-owner", {kind:"update", custody:"reserved"});
+if (orphan.kind !== "acquired" || !store.bindUpdateChildren([orphan.lease], ${holder.pid})) throw new Error("Historical orphan fixture failed");
 createManagedCommandProcessCustody({ roots: [${JSON.stringify(pendingRoot)}], runId: "pending-owner", databaseIdentity: command.databaseIdentity }).custody.reserve([process.execPath]);
 process.kill(process.pid, "SIGKILL");
 `,

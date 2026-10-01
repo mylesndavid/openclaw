@@ -3,6 +3,7 @@ import { isChildProcessTreeAlive } from "../process/child-process-tree.js";
 import { executeSqliteQuerySync } from "./kysely-sync.js";
 import {
   type createManagedHandoffLeaseDatabase,
+  type LeaseTable,
   leaseQueries,
 } from "./update-managed-service-handoff-database.js";
 import type {
@@ -52,13 +53,10 @@ export function createManagedHandoffChildReader(deps: {
   handle: ReturnType<typeof createManagedHandoffLeaseRows>["handle"];
   processState: ReturnType<typeof createManagedHandoffProcessIdentityReader>["processState"];
 }) {
-  return function hasUnsettledChildren(
+  function readChildren(
     parent: ManagedHandoffParent | string,
     connection?: HandoffDatabase,
-  ): boolean {
-    if (typeof parent !== "string" && (parent.version === 3 || parent.version === 4)) {
-      return true;
-    }
+  ): LeaseTable[] {
     const prefix = `${typeof parent === "string" ? parent : parent.key}/.openclaw-update-child-`;
     const inspect = (db: HandoffDatabase) =>
       executeSqliteQuerySync(
@@ -68,7 +66,15 @@ export function createManagedHandoffChildReader(deps: {
           .select(["install_root", "owner", "payload_json", "updated_at"])
           .where("install_root", ">=", prefix)
           .where("install_root", "<", prefix + "\uffff"),
-      ).rows.some((entry) => {
+      ).rows;
+    return connection ? inspect(connection) : deps.withDatabase(false, inspect);
+  }
+  return {
+    hasUnsettledChildren(parent: ManagedHandoffParent | string, connection?: HandoffDatabase) {
+      if (typeof parent !== "string" && (parent.version === 3 || parent.version === 4)) {
+        return true;
+      }
+      return readChildren(parent, connection).some((entry) => {
         const child = deps.handle(entry.install_root, entry);
         return managedCommandCustody(child)
           ? managedCommandUnsettled(child)
@@ -78,6 +84,18 @@ export function createManagedHandoffChildReader(deps: {
               deps.processState(child.executor) !== "dead" ||
               (process.platform !== "win32" && isChildProcessTreeAlive(child.executor));
       });
-    return connection ? inspect(connection) : deps.withDatabase(false, inspect);
+    },
+    readCommandChildren(roots: readonly string[], connection?: HandoffDatabase) {
+      const inspect = (db: HandoffDatabase) => [
+        ...new Map(
+          roots
+            .flatMap((root) => readChildren(root, db))
+            .map((entry) => deps.handle(entry.install_root, entry))
+            .filter((lease) => managedCommandCustody(lease))
+            .map((lease) => [lease.key, lease]),
+        ).values(),
+      ];
+      return connection ? inspect(connection) : deps.withDatabase(false, inspect);
+    },
   };
 }

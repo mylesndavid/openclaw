@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { hashConfigRaw } from "../../config/io.read-helpers.js";
+import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
 import * as tempRoot from "../../infra/tmp-openclaw-dir.js";
 import {
@@ -14,6 +15,11 @@ import {
   writeUpdatePostInstallDoctorResult,
   type UpdatePostInstallDoctorResult,
 } from "../../infra/update-doctor-result.js";
+import {
+  createManagedHandoffLeaseDatabase,
+  leaseQueries,
+} from "../../infra/update-managed-service-handoff-database.js";
+import { parseManagedHandoffLeasePayload } from "../../infra/update-managed-service-handoff-schema.js";
 import { UpdateRequesterRevokedError } from "../../infra/update-requester-authority.js";
 import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import type { UpdateStepResult } from "../../infra/update-step-result.js";
@@ -30,6 +36,7 @@ import { waitForPidToExit } from "../../test-utils/process-tree.js";
 import type { UpdateCommandOptions } from "./shared.js";
 import { runUpdateDoctorProcess } from "./update-command-doctor-child.js";
 import { createUpdateCommandExecutionGuards } from "./update-command-execution-guards.js";
+import { updateExecutorNativeEntrypoints } from "./update-command-executor-native-runtime.test-support.js";
 import { withUpdateCommandExecutor } from "./update-command-executor.js";
 import { settleUpdateDoctorMaintenance } from "./update-command-maintenance.js";
 import { runPackageUpdateDoctor } from "./update-command-package.js";
@@ -93,6 +100,40 @@ function doctorOptions(
       ...guards,
     }),
   };
+}
+
+function readHandoffClaims() {
+  const read = createManagedHandoffLeaseDatabase(
+    path.join(root, "tmp", "managed-update-handoffs.sqlite"),
+  );
+  return read(
+    false,
+    (db) =>
+      executeSqliteQuerySync(db, leaseQueries(db).selectFrom("managed_update_handoffs").selectAll())
+        .rows,
+  );
+}
+
+function readCommandClaims() {
+  return readHandoffClaims().filter((row) => {
+    const payload = parseManagedHandoffLeasePayload(row.payload_json);
+    return payload?.version === 2 && payload.action.kind === "update" && payload.action.custody;
+  });
+}
+
+function expectRetainedCommandClaims(writerPid: number, roots: string[]) {
+  const claims = readCommandClaims();
+  expect(claims).toHaveLength(roots.length);
+  expect(claims.map((claim) => claim.install_root.split("/.openclaw-update-child-")[0])).toEqual(
+    expect.arrayContaining(roots),
+  );
+  for (const claim of claims) {
+    expect(parseManagedHandoffLeasePayload(claim.payload_json)).toMatchObject({
+      version: 2,
+      executor: { pid: writerPid },
+      action: { kind: "update", custody: "bound" },
+    });
+  }
 }
 
 it.each([
@@ -392,7 +433,7 @@ it.skipIf(process.platform === "win32").each([true, false])(
     const steps: UpdateStepResult[] = [];
     try {
       const execution = withUpdateCommandExecutor(runId, async (executor) => {
-        const fence = await executor.enter(root);
+        const fence = await executor.enter(root, { serviceRoot });
         const guards = createUpdateCommandExecutionGuards(
           { run: { runId, env, executorFence: fence } },
           root,
@@ -445,11 +486,13 @@ it.skipIf(process.platform === "win32").each([true, false])(
       });
       if (identityAvailable) {
         await execution;
+        expect(readCommandClaims()).toEqual([]);
       } else {
         const failure = await execution.catch((error: unknown) => error);
         expect(hasCommandProcessCleanupError(failure)).toBe(true);
         assert(writer);
         expect(isChildProcessTreeAlive(writer)).toBe(true);
+        expectRetainedCommandClaims(writer.pid, [root, serviceRoot]);
         expect(steps).toContainEqual(
           expect.objectContaining({
             name: "doctor process settlement",
@@ -520,6 +563,21 @@ it.skipIf(process.platform === "win32").each([
       expect(isChildProcessTreeAlive({ pid: doctorPid })).toBe(false);
       expect(isChildProcessTreeAlive(writer)).toBe(!identityAvailable);
       expect(hasCommandProcessCleanupError(error)).toBe(!identityAvailable);
+      if (identityAvailable) {
+        expect(readCommandClaims()).toEqual([]);
+        expect(readHandoffClaims().find((claim) => claim.install_root === root)).toBeUndefined();
+      } else {
+        expectRetainedCommandClaims(writer.pid, [root]);
+        const anchor = readHandoffClaims().find((claim) => claim.install_root === root);
+        assert(anchor);
+        expect(anchor.owner).toMatch(/^doctor:/);
+        expect(parseManagedHandoffLeasePayload(anchor.payload_json)).toMatchObject({
+          version: 2,
+          helper: { pid: doctorPid },
+          executor: { pid: doctorPid },
+          action: { kind: "update" },
+        });
+      }
       if (identityAvailable) {
         if (frozen) {
           expect(error).toMatchObject({ message: original.message, cause: original });
@@ -595,6 +653,7 @@ function busyDoctorWriterArgv(identityAvailable: boolean): string[] {
     sourceWorkerName: "../../process/exec-spawn",
     distWorkerPath: "process/exec-spawn.js",
   });
+  const executorModule = resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.executor);
   return [
     process.execPath,
     ...(custodyModule.pathname.endsWith(".ts")
@@ -608,9 +667,13 @@ function busyDoctorWriterArgv(identityAvailable: boolean): string[] {
                 import { retainUpdateDoctorProcesses } from ${JSON.stringify(custodyModule.href)};
                 import { withCommandProcessScope, spawnCommand } from ${JSON.stringify(spawnModule.href)};
                 process.on('SIGTERM', () => {});
+                  let input = '';
+                  process.stdin.setEncoding('utf8');
+                  process.stdin.on('data', chunk => { input += chunk; });
                   process.stdin.resume();
                   process.stdin.on('end', async () => {
-                    const custody = await retainUpdateDoctorProcesses();
+                    const run = async (fence, commandAuthority) => {
+                    const custody = await retainUpdateDoctorProcesses(fence?.assertCurrent, commandAuthority);
                     const reserve = custody.reserve;
                     if (!${identityAvailable}) custody.reserve = (...args) => {
                       const slot = reserve(...args);
@@ -624,6 +687,14 @@ function busyDoctorWriterArgv(identityAvailable: boolean): string[] {
                     writeSync(1, 'Doctor busy ' + child.pid + '\\n');
                     for (;;) {}
                     }, undefined, custody);
+                    };
+                    if (input) {
+                      const { withDelegatedUpdateCommandExecutor } = await import(${JSON.stringify(executorModule.href)});
+                      const doctor = JSON.parse(input);
+                      await withDelegatedUpdateCommandExecutor(doctor.executor, doctor.runId, doctor.root, run);
+                    } else {
+                      await run();
+                    }
                 });
               `,
   ];

@@ -11,6 +11,7 @@ import {
 } from "./update-doctor-process-custody.js";
 import { UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV } from "./update-doctor-result.js";
 import * as nativeCustody from "./update-managed-command-custody.js";
+import { createManagedHandoffLeaseStore } from "./update-managed-service-handoff-lease.js";
 
 const directories = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => {
@@ -41,6 +42,87 @@ it("permits no-child Doctor work without an installation root while refusing wri
   ).rejects.toThrow("Doctor process custody requires its installation root");
   expect(fs.existsSync(effect)).toBe(false);
 });
+
+it.skipIf(process.platform === "win32").each(["reservation-before-ipc", "retired-before-ipc"])(
+  "reconciles durable Doctor custody across %s without trusting the IPC namespace",
+  async (cut) => {
+    const root = directories.make("doctor-native-retirement-");
+    const roots = [path.join(root, "original"), path.join(root, "candidate")];
+    const resultPath = path.join(root, "doctor-result.json");
+    const native = nativeCustody.createManagedCommandProcessCustody({
+      roots,
+      runId: "run",
+      databasePath: path.join(root, "handoffs.sqlite"),
+    });
+    const parent = createUpdateDoctorProcessCustody("run", root, resultPath, {
+      roots,
+      databaseIdentity: native.databaseIdentity,
+    });
+    const receipt: Record<string, unknown> = JSON.parse(
+      fs.readFileSync(`${resultPath}.processes`, "utf8"),
+    );
+    fs.writeFileSync(
+      `${resultPath}.processes`,
+      JSON.stringify({
+        ...receipt,
+        pid: process.pid,
+        namespace: {
+          roots: [path.join(root, "unrelated")],
+          databaseIdentity: native.databaseIdentity,
+        },
+        slots:
+          cut === "retired-before-ipc" ? [{ id: 1, identity: { pid: 4242, startedAt: 1 } }] : [],
+      }),
+    );
+    const doctorNative = nativeCustody.createManagedCommandProcessCustody({
+      roots,
+      runId: "run",
+      databaseIdentity: native.databaseIdentity,
+      anchorOwner: `doctor:${receipt.nonce}`,
+    });
+    const reservation =
+      cut === "reservation-before-ipc"
+        ? doctorNative.custody.reserve([process.execPath])
+        : undefined;
+    const store = createManagedHandoffLeaseStore({
+      databasePath: native.databasePath,
+      existingIdentity: native.databaseIdentity,
+      serviceManagerEnv: {},
+    });
+    vi.spyOn(groups, "isChildProcessTreeAlive").mockReturnValue(false);
+    try {
+      const settlement = await parent.settle({
+        pid: process.pid,
+        code: 124,
+        cleanup: "forced",
+        termination: "timeout",
+      });
+      expect(settlement).toMatchObject({ exitCode: reservation ? 1 : 0 });
+      if (reservation) {
+        expect(settlement?.failureFacts).toContainEqual(
+          expect.objectContaining({
+            code: "doctor-processes-unsettled",
+            message: expect.stringContaining("reservation"),
+          }),
+        );
+        expect(store.readCommandChildren(roots)).toHaveLength(roots.length);
+        for (const root of roots) {
+          expect(store.read(root)).toMatchObject({
+            kind: "current",
+            lease: { owner: `doctor:${receipt.nonce}` },
+          });
+        }
+      } else {
+        expect(store.readCommandChildren(roots)).toEqual([]);
+      }
+      parent.close();
+      expect(fs.existsSync(`${resultPath}.processes`)).toBe(Boolean(reservation));
+    } finally {
+      reservation?.settled();
+      doctorNative.releaseAnchors();
+    }
+  },
+);
 
 it.each([
   {

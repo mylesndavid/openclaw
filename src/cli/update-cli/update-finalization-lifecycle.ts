@@ -15,6 +15,7 @@ import {
   createUpdateFailureFact,
   type UpdateFailureFact,
 } from "../../infra/update-failure-facts.js";
+import type { ManagedHandoffRepair } from "../../infra/update-managed-service-handoff-lease-types.js";
 import { POST_CORE_UPDATE_ENV } from "../../infra/update-post-core-context.js";
 import { readUpdateRunDriver, type UpdateRunDriver } from "../../infra/update-run-driver.js";
 import {
@@ -77,6 +78,7 @@ export class UpdateFinalizationLifecycle {
   }[] = [];
   root?: string;
   serviceUpdateVerdict?: ManagedGatewayUpdateVerdict;
+  handoff?: ManagedHandoffRepair;
   private runId?: string;
   private driver?: UpdateRunDriver;
   private ledgerOptions?: { env: NodeJS.ProcessEnv };
@@ -110,6 +112,7 @@ export class UpdateFinalizationLifecycle {
     ).runId;
     this.ownsRun = !inherited;
     adoptUpdateRun(this.runId, admissionOptions);
+    this.handoff?.bindRun(this.runId);
     if (repair && this.ownsRun) {
       recordUpdateRunRepairContinuation(this.runId, this.runId, admissionOptions);
     }
@@ -329,6 +332,7 @@ export class UpdateFinalizationLifecycle {
     const scope: UpdateFinalizationPhase = {
       signal: resolveCommandProcessSignal(deadline.signal) ?? deadline.signal,
       assertCurrent: () => {
+        this.handoff?.assertCurrent();
         deadline.assertCurrent();
         scope.signal.throwIfAborted();
       },
@@ -336,6 +340,7 @@ export class UpdateFinalizationLifecycle {
     try {
       // Service custody must be acquired before cancellation, and restored outside it.
       await withCommandProcessScope(async () => {
+        this.handoff?.assertCurrent();
         await custody?.enter?.();
       });
       // Borrowed invocations do not take over their host's lifetime.
