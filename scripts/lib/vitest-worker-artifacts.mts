@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { vitestWorkerDeclarationEntries } from "./vitest-worker-declarations.mts";
 
@@ -60,9 +61,15 @@ export async function verifyVitestWorkerArtifacts(
     },
   ];
   const batchSize = 32;
+  let firstBatch = true;
   for (const { files, root: baseDir, changed } of groups) {
     const entries = Object.entries(files);
     for (let offset = 0; offset < entries.length; offset += batchSize) {
+      // Ready reads can drain as microtasks without giving signals an event-loop turn.
+      if (!firstBatch) {
+        await nextTurn();
+      }
+      firstBatch = false;
       // Native batches keep pre-install planning dependency-free and signals responsive.
       // Drain every started read before rejection: the owner may delete files next.
       const settled = await Promise.allSettled(

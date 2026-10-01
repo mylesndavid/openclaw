@@ -13,41 +13,68 @@ import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
-it("keeps the runner event loop responsive while verifying a completed generation", async () => {
-  const directory = tempDirs.make("vitest-worker-verification-");
-  fs.mkdirSync(path.join(directory, "dist"));
-  const manifest: VitestWorkerManifest = {
-    identity: "verification-fixture",
-    inputs: {},
-    outputs: {},
-    durationMs: 0,
-  };
-  const source = "export const value = 1;\n";
-  const hash = hashVitestWorkerArtifact(source);
-  for (let index = 0; index < 64; index++) {
-    const input = path.join(directory, `input-${index}.ts`);
-    const output = `output-${index}.js`;
-    fs.writeFileSync(input, source);
-    fs.writeFileSync(path.join(directory, "dist", output), source);
-    manifest.inputs[input] = hash;
-    manifest.outputs[output] = hash;
-  }
+it.each(["filesystem", "microtask"] as const)(
+  "keeps the runner event loop responsive while verifying a completed generation (%s reads)",
+  async (completion) => {
+    const directory = tempDirs.make("vitest-worker-verification-");
+    fs.mkdirSync(path.join(directory, "dist"));
+    const manifest: VitestWorkerManifest = {
+      identity: "verification-fixture",
+      inputs: {},
+      outputs: {},
+      durationMs: 0,
+    };
+    const source = "export const value = 1;\n";
+    const hash = hashVitestWorkerArtifact(source);
+    const files = new Set<string>();
+    for (let index = 0; index < 64; index++) {
+      const input = path.join(directory, `input-${index}.ts`);
+      const output = `output-${index}.js`;
+      const outputPath = path.join(directory, "dist", output);
+      fs.writeFileSync(input, source);
+      fs.writeFileSync(outputPath, source);
+      manifest.inputs[input] = hash;
+      manifest.outputs[output] = hash;
+      files.add(input);
+      files.add(outputPath);
+    }
 
-  let completed = false;
-  // Supply the manifest so an asynchronous manifest read alone cannot satisfy
-  // the assertion: the source/artifact traversal itself must yield to I/O.
-  const verification = Promise.resolve(verifyVitestWorkerArtifacts(directory, manifest)).then(
-    () => {
-      completed = true;
-    },
-  );
-  try {
-    await nextTurn();
-    expect(completed, "verification blocked the runner until every file was hashed").toBe(false);
-  } finally {
-    await verification;
-  }
-});
+    const observedReads: string[] = [];
+    const readFile = fs.readFile.bind(fs);
+    const reader =
+      completion === "microtask"
+        ? vi.spyOn(fs, "readFile").mockImplementation((...args) => {
+            const [filename, callback] = args;
+            if (typeof filename !== "string" || !files.has(filename)) {
+              return readFile(...args);
+            }
+            observedReads.push(filename);
+            queueMicrotask(() => callback(null, Buffer.from(source)));
+          })
+        : undefined;
+    let completed = false;
+    // Supply the manifest so an asynchronous manifest read alone cannot satisfy
+    // the assertion: the source/artifact traversal itself must yield to I/O.
+    const verification = Promise.resolve(verifyVitestWorkerArtifacts(directory, manifest)).then(
+      () => {
+        completed = true;
+      },
+    );
+    try {
+      await nextTurn();
+      expect(completed, "verification blocked the runner until every file was hashed").toBe(false);
+    } finally {
+      try {
+        await verification;
+      } finally {
+        reader?.mockRestore();
+      }
+    }
+    if (completion === "microtask") {
+      expect(observedReads.toSorted()).toEqual([...files].toSorted());
+    }
+  },
+);
 
 it.each([
   { group: "inputs", damage: "changed" },
