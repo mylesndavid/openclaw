@@ -1,5 +1,3 @@
-import type { OpenClawStateLeaseIdentity } from "../state/openclaw-state-lease.types.js";
-
 export type ProjectRegistryIdentity = {
   id: string;
   repoRoot: string;
@@ -17,9 +15,4 @@ export type ProjectRegistryInsert = {
   repoRoot: string;
   originUrl?: string;
   source: "registered" | "cloned";
-};
-
-export type ProjectCheckoutLeaseInput<TProject> = {
-  project: TProject;
-  lease: OpenClawStateLeaseIdentity;
 };

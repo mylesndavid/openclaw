@@ -42,6 +42,7 @@ import type { UserProfileWorkerOperations } from "./user-profiles.worker.js";
 import { createWorkerOperationRegistry } from "./worker-operation-registry.js";
 
 export type RegisteredStateWorkerOperations = WebPushWorkerOperations &
+  ProjectRegistryWorkerOperations &
   ApnsRegistrationWorkerOperations &
   WorktreeWorkerOperations &
   FleetRegistryWriteOperations &
@@ -77,11 +78,12 @@ export type RegisteredStateWorkerOperations = WebPushWorkerOperations &
   PlacementTurnClaimWorkerOperations &
   WorkspaceJournalWorkerOperations &
   WorkerEnvironmentWorkerOperations &
-  ProjectRegistryWorkerOperations &
   RepositoryWorkspaceWorkerOperations &
   UserProfileWorkerOperations;
 
 export const stateWorkerRegistry = createWorkerOperationRegistry<RegisteredStateWorkerOperations>({
+  projects: () =>
+    import("../projects/project-registry.worker.js").then((m) => m.projectRegistryOperations),
   operatorApprovals: () =>
     import("../gateway/operator-approval-store.operations.js").then(
       (m) => m.operatorApprovalOperations,
@@ -172,8 +174,6 @@ export const stateWorkerRegistry = createWorkerOperationRegistry<RegisteredState
     import("../gateway/worker-environments/store.worker.js").then(
       (m) => m.workerEnvironmentOperations,
     ),
-  projects: () =>
-    import("../projects/project-registry.worker.js").then((m) => m.projectRegistryOperations),
   repositoryWorkspaces: () =>
     import("./session-repository-workspaces.worker.js").then(
       (m) => m.repositoryWorkspaceOperations,
