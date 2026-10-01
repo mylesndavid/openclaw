@@ -45,7 +45,7 @@ it.each([true, false])(
     expect(host.chatAttachments).toEqual([attachment]);
     expect(getChatAttachmentDataUrl(attachment)).toBe(attachmentDataUrl);
     expect(host.chatQueue).toEqual([]);
-    expect(host.request).not.toHaveBeenCalledWith("chat.send", expect.anything());
+    expect(host.request.mock.calls.some(([method]) => method === "chat.send")).toBe(false);
     expect(host.chatError).toBe("Earlier request failed");
     expect(host.lastError).toBe("Earlier request failed");
   },
@@ -82,7 +82,7 @@ it("rechecks send access after settings settle without sending an admitted later
   settingsPatch.resolve(true);
   await send;
 
-  expect(host.request).not.toHaveBeenCalledWith("chat.send", expect.anything());
+  expect(host.request.mock.calls.some(([method]) => method === "chat.send")).toBe(false);
   expect(listStoredChatOutboxes(host)[0]?.queue).toMatchObject([
     {
       id: original.id,
