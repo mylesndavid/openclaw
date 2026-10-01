@@ -139,9 +139,27 @@ describe("deferred plugin session receipt retirement", () => {
       const database = fs.statSync(target.sqlitePath, { bigint: true });
       expect(`${database.dev}:${database.ino}`).not.toBe(receipt.databaseIdentity);
 
-      const laterEvent = { type: "session", version: 3, id: "later-history" };
+      const laterEvents = [
+        {
+          type: "session",
+          version: 3,
+          id: "later-history",
+          timestamp: "2026-06-15T00:00:00.000Z",
+          cwd: "/legacy/workspace",
+        },
+        {
+          type: "message",
+          id: "later-message",
+          parentId: null,
+          timestamp: "2026-06-15T00:00:01.000Z",
+          message: { role: "user", content: "new history after database replacement" },
+        },
+      ];
       const laterTranscript = path.join(path.dirname(target.storePath), "later-history.jsonl");
-      fs.writeFileSync(laterTranscript, `${JSON.stringify(laterEvent)}\n`);
+      fs.writeFileSync(
+        laterTranscript,
+        `${laterEvents.map((event) => JSON.stringify(event)).join("\n")}\n`,
+      );
       const rebound = await run();
       const issues = rebound.targets.flatMap((entry) => entry.issues);
       expect(issues).not.toContainEqual(
@@ -151,7 +169,7 @@ describe("deferred plugin session receipt retirement", () => {
         expect.objectContaining({ code: "retained_plugin_source_index_rebuilt" }),
       );
       expect(rebound.totals.importedEntries).toBe(1);
-      expect(rebound.totals.importedTranscriptEvents).toBe(1);
+      expect(rebound.totals.importedTranscriptEvents).toBe(2);
       expect(readDeferredPluginSessionImport(receiptParams)).toBeUndefined();
       expect(loadExactSessionEntry({ ...scope, sessionKey: "agent:main:kept" })?.entry.label).toBe(
         "current SQLite metadata",
@@ -160,15 +178,15 @@ describe("deferred plugin session receipt retirement", () => {
         originalEvents,
       );
 
-      expect(loadTranscriptEventsSync({ ...scope, sessionId: "later-history" })).toEqual([
-        laterEvent,
-      ]);
+      expect(loadTranscriptEventsSync({ ...scope, sessionId: "later-history" })).toEqual(
+        laterEvents,
+      );
       const later = await run();
       expect(later.totals.importedEntries).toBe(0);
       expect(later.totals.importedTranscriptEvents).toBe(0);
-      expect(loadTranscriptEventsSync({ ...scope, sessionId: "later-history" })).toEqual([
-        laterEvent,
-      ]);
+      expect(loadTranscriptEventsSync({ ...scope, sessionId: "later-history" })).toEqual(
+        laterEvents,
+      );
     });
   });
 
