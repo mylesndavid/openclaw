@@ -19,8 +19,6 @@ import type {
 import type { ExecAllowlistEntry } from "./exec-approvals.types.js";
 import { expandHomePrefix, resolveHomeRelativePath } from "./home-dir.js";
 
-const toStringOrUndefined = readStringValue;
-
 const execSecuritySchema = z.enum(["allowlist", "full", "deny"]);
 const execAskSchema = z.enum(["always", "off", "on-miss"]);
 const persistedExecApprovalPolicySchema = z.looseObject({
@@ -358,9 +356,9 @@ function normalizeAllowlistMetadata(
 function sanitizeExecApprovalPolicy(
   policy: ExecApprovalsDefaults | ExecApprovalsAgent | undefined,
 ): ExecApprovalsDefaults {
-  const security = toStringOrUndefined(policy?.security)?.trim();
-  const ask = toStringOrUndefined(policy?.ask)?.trim();
-  const askFallback = toStringOrUndefined(policy?.askFallback)?.trim();
+  const security = readStringValue(policy?.security)?.trim();
+  const ask = readStringValue(policy?.ask)?.trim();
+  const askFallback = readStringValue(policy?.askFallback)?.trim();
   return {
     security:
       security === "deny" || security === "allowlist" || security === "full" ? security : undefined,
