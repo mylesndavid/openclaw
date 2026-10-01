@@ -680,6 +680,9 @@ function busyDoctorWriterArgv(identityAvailable: boolean): string[] {
                       return { ...slot, spawned: ({ pid }) => slot.spawned({ pid, startedAt: null }) };
                     };
                     await withCommandProcessScope(async () => {
+                    const probe = await spawnCommand([${JSON.stringify(path.join(root, "missing-doctor-probe"))}],
+                      { stdio: 'ignore', reject: false });
+                    if (probe.code !== 'ENOENT') throw new Error('Expected a failed Doctor probe');
                     const child = spawnCommand([process.execPath, '-e',
                       "process.on('SIGTERM', () => {}); process.stdout.write('ready'); for (;;) {}"
                     ], { stdio: ['ignore', 'pipe', 'ignore'], buffer: false, reject: false });

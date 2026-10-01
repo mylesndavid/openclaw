@@ -1,6 +1,7 @@
 import type { DatabaseSync as HandoffDatabase } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { executeSqliteQuerySync } from "./kysely-sync.js";
+import { managedCommandCustody } from "./update-managed-service-handoff-children.js";
 import {
   createManagedHandoffLeaseDatabase,
   leaseQueries,
@@ -114,21 +115,56 @@ export function createManagedHandoffCancellation(deps: CancellationDependencies)
           .where("install_root", "<", prefix + "\uffff"),
       ).rows;
     };
+    const nativeCommand = (child: ManagedHandoffLease, db: HandoffDatabase) => {
+      // Pending spawns still need their live root generation to publish a late PID binding.
+      if (
+        managedCommandCustody(child) !== "bound" ||
+        !/\/\.openclaw-update-child-[a-f0-9-]{36}-command$/.test(child.key)
+      ) {
+        return false;
+      }
+      const aliases = childAliases(child.key, db);
+      if (!aliases.includes(child.key)) {
+        return false;
+      }
+      const peers = executeSqliteQuerySync(
+        db,
+        leaseQueries(db)
+          .selectFrom("managed_update_handoffs")
+          .select(["install_root", "owner", "payload_json", "updated_at"])
+          .where("install_root", "in", aliases),
+      ).rows;
+      return (
+        peers.length === aliases.length &&
+        peers.every((entry) => {
+          const peer = handle(entry.install_root, entry);
+          return (
+            peer.version === 2 &&
+            peer.owner === child.owner &&
+            isDeepStrictEqual(peer.action, child.action) &&
+            isDeepStrictEqual(peer.helper, child.helper) &&
+            isDeepStrictEqual(peer.executor, child.executor)
+          );
+        })
+      );
+    };
     const transitioned = withDatabase(true, (db) =>
       transact(db, () => {
         if (!mutationCurrent(lease, db) || (retained && !mutationCurrent(retained, db))) {
           return null;
         }
         const originalChildren = descendants(db, lease);
-        // Old admitted receivers cannot safely race cancellation with nested
-        // admission. Only marked original lineage and its known mirrors qualify.
+        // Raw commands do not poll cancellation. Their native claims survive the
+        // root fence until physical joins and complete alias retirement finish.
         if (
           originalChildren.some((entry) => {
             const child = handle(entry.install_root, entry);
             return (
               child.version !== 2 ||
               child.action.kind !== "update" ||
-              child.action.mutationProtocol !== "original-cancellation-v1"
+              (managedCommandCustody(child)
+                ? !nativeCommand(child, db)
+                : child.action.mutationProtocol !== "original-cancellation-v1")
             );
           })
         ) {
@@ -142,6 +178,7 @@ export function createManagedHandoffCancellation(deps: CancellationDependencies)
             return (
               child.version !== 2 ||
               child.action.kind !== "update" ||
+              (managedCommandCustody(child) && !nativeCommand(child, db)) ||
               !childAliases(child.key, db).some((key) => originalKeys.has(key))
             );
           })

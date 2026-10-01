@@ -70,7 +70,7 @@ export function createManagedHandoffChildReader(deps: {
     return connection ? inspect(connection) : deps.withDatabase(false, inspect);
   }
   return {
-    hasUnsettledChildren(parent: ManagedHandoffParent | string, connection?: HandoffDatabase) {
+    hasUnsettledChildren: (parent: ManagedHandoffParent | string, connection?: HandoffDatabase) => {
       if (typeof parent !== "string" && (parent.version === 3 || parent.version === 4)) {
         return true;
       }
@@ -85,7 +85,7 @@ export function createManagedHandoffChildReader(deps: {
               (process.platform !== "win32" && isChildProcessTreeAlive(child.executor));
       });
     },
-    readCommandChildren(roots: readonly string[], connection?: HandoffDatabase) {
+    readCommandChildren: (roots: readonly string[], connection?: HandoffDatabase) => {
       const inspect = (db: HandoffDatabase) => [
         ...new Map(
           roots

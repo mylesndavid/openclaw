@@ -594,7 +594,8 @@ export function createManagedHandoffLeaseStore(
               hasUnsettledChildren(lease, db) ||
               (lease.version === 2 &&
                 lease.action.kind === "update" &&
-                lease.action.mutationProtocol === "original-cancellation-v1" &&
+                (lease.action.mutationProtocol === "original-cancellation-v1" ||
+                  managedCommandCustody(lease) === "bound") &&
                 [...childAliases(lease.key, db), ...readOriginalUpdateDependents(lease, db)].some(
                   (key) => !leases.some((paired) => paired.key === key),
                 )) ||

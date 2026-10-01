@@ -321,7 +321,13 @@ function retainCommandProcess(
   };
   scope.children.add(owned);
   void completed.then(() => {
-    if (pid !== undefined && process.platform !== "win32" && !isChildProcessTreeAlive({ pid })) {
+    // Failed launches must retire before a later command can strand the enclosing scope.
+    const neverStarted =
+      pid === undefined && (!(nativeChild instanceof BrokerChild) || nativeChild.notStarted);
+    if (
+      neverStarted ||
+      (pid !== undefined && process.platform !== "win32" && !isChildProcessTreeAlive({ pid }))
+    ) {
       try {
         settleCustody();
         scope.children.delete(owned);

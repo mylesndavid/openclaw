@@ -61,6 +61,10 @@ it.skipIf(process.platform === "win32").each(["reservation-before-ipc", "retired
     const receipt: Record<string, unknown> = JSON.parse(
       fs.readFileSync(`${resultPath}.processes`, "utf8"),
     );
+    const nonce = receipt.nonce;
+    if (typeof nonce !== "string") {
+      throw new Error("Doctor custody nonce is unavailable");
+    }
     fs.writeFileSync(
       `${resultPath}.processes`,
       JSON.stringify({
@@ -78,7 +82,7 @@ it.skipIf(process.platform === "win32").each(["reservation-before-ipc", "retired
       roots,
       runId: "run",
       databaseIdentity: native.databaseIdentity,
-      anchorOwner: `doctor:${receipt.nonce}`,
+      anchorOwner: `doctor:${nonce}`,
     });
     const reservation =
       cut === "reservation-before-ipc"
@@ -106,10 +110,10 @@ it.skipIf(process.platform === "win32").each(["reservation-before-ipc", "retired
           }),
         );
         expect(store.readCommandChildren(roots)).toHaveLength(roots.length);
-        for (const root of roots) {
-          expect(store.read(root)).toMatchObject({
+        for (const installRoot of roots) {
+          expect(store.read(installRoot)).toMatchObject({
             kind: "current",
-            lease: { owner: `doctor:${receipt.nonce}` },
+            lease: { owner: `doctor:${nonce}` },
           });
         }
       } else {

@@ -1,5 +1,6 @@
 import { PassThrough } from "node:stream";
 import { setImmediate } from "node:timers/promises";
+import { collectNestedErrorCandidates } from "@openclaw/normalization-core/error-coercion";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferredCore } from "../shared/deferred.js";
 import { withMockedWindowsPlatform } from "../test-utils/vitest-spies.js";
@@ -415,13 +416,34 @@ it("closes nested native admission without waiting for its logical callback", as
   expect(transport.spawn).not.toHaveBeenCalled();
 });
 
-it("recognizes canonical cleanup through aggregates without trusting copied code fields", async () => {
+it("preserves canonical cleanup remedies through nested scopes and module copies", async () => {
   const original = new CommandProcessCleanupError();
   expect(hasCommandProcessCleanupError(new AggregateError([original], "outer"))).toBe(true);
-  expect(
-    hasCommandProcessCleanupError(Object.assign(new Error("other"), { code: original.code })),
-  ).toBe(false);
+  const unrelated = Object.assign(new Error("private unrelated failure"), { code: original.code });
+  expect(hasCommandProcessCleanupError(unrelated)).toBe(false);
+  expect(new CommandProcessCleanupError({ cause: unrelated })).toMatchObject({
+    message: "Command cleanup could not confirm that owned work stopped",
+    cause: unrelated,
+  });
   vi.resetModules();
   const duplicate = await import("./exec-result.js");
-  expect(hasCommandProcessCleanupError(new duplicate.CommandProcessCleanupError())).toBe(true);
+  const refusal = new duplicate.CommandProcessCleanupError();
+  const message =
+    "Doctor processes remain unsettled, data-at-risk. PIDs/process groups: 424242; resolve retained process custody before retrying `openclaw update repair`.";
+  refusal.message = message;
+  const cause = new AggregateError(
+    [original, new Error("private wrapper", { cause: refusal })],
+    "private aggregate",
+    { cause: unrelated },
+  );
+  const failure = await ownScope(() =>
+    ownScope(() =>
+      ownScope(async () => {
+        throw cause;
+      }),
+    ),
+  ).catch((error: unknown) => error);
+  expect(hasCommandProcessCleanupError(failure)).toBe(true);
+  expect(failure).toMatchObject({ message, code: original.code, cleanup: "uncertain" });
+  expect(collectNestedErrorCandidates(failure)).toContain(cause);
 });

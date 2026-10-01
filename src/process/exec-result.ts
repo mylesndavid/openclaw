@@ -5,6 +5,15 @@ import {
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 
 const commandCleanupUncertain = Symbol.for("openclaw.command-cleanup-uncertain");
+const commandCleanupMessage = "Command cleanup could not confirm that owned work stopped";
+
+function isCanonicalCommandProcessCleanupError(candidate: unknown): boolean {
+  try {
+    return Object.getOwnPropertyDescriptor(candidate, commandCleanupUncertain)?.value === true;
+  } catch {
+    return false;
+  }
+}
 
 /** An admitted command may still write; callers must retain its artifacts for recovery. */
 export class CommandProcessCleanupError extends Error {
@@ -12,7 +21,23 @@ export class CommandProcessCleanupError extends Error {
   readonly cleanup = "uncertain";
 
   constructor(options?: ErrorOptions) {
-    super("Command cleanup could not confirm that owned work stopped", options);
+    let message = commandCleanupMessage;
+    // Preserve the first canonical remedy without exposing unrelated cause text.
+    for (const candidate of collectNestedErrorCandidates(options?.cause)) {
+      if (!isCanonicalCommandProcessCleanupError(candidate)) {
+        continue;
+      }
+      try {
+        const detail: unknown = Object.getOwnPropertyDescriptor(candidate, "message")?.value;
+        if (typeof detail === "string" && detail.trim() && detail !== commandCleanupMessage) {
+          message = detail;
+          break;
+        }
+      } catch {
+        // Opaque causes must not prevent cleanup classification.
+      }
+    }
+    super(message, options);
     this.name = "CommandProcessCleanupError";
     Object.defineProperty(this, commandCleanupUncertain, { value: true });
   }
@@ -20,13 +45,7 @@ export class CommandProcessCleanupError extends Error {
 
 /** Preserve canonical cleanup classification across cause chains and module copies. */
 export function hasCommandProcessCleanupError(error: unknown): boolean {
-  return collectNestedErrorCandidates(error).some((candidate) => {
-    try {
-      return Object.getOwnPropertyDescriptor(candidate, commandCleanupUncertain)?.value === true;
-    } catch {
-      return false;
-    }
-  });
+  return collectNestedErrorCandidates(error).some(isCanonicalCommandProcessCleanupError);
 }
 
 export type SpawnResult = {
