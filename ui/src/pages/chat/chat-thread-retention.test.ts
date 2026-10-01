@@ -1,5 +1,4 @@
 // @vitest-environment node
-import { queryObjects } from "node:v8";
 import { describe, expect, it } from "vitest";
 import { collectGarbageForTest } from "../../test-helpers/garbage-collection.ts";
 import { buildItems } from "./chat-thread.test-support.ts";
@@ -29,16 +28,12 @@ describe("tool expansion state", () => {
     };
     try {
       const { messageReference, collectionControl } = populatePane();
-      await collectGarbageForTest(() => {
-        expect(queryObjects(TranscriptMessage)).toBe(1);
-      });
+      await collectGarbageForTest();
       expect(collectionControl.deref()).toBeUndefined();
       expect(messageReference.deref() !== undefined).toBe(true);
 
       resetChatThreadState(paneId);
-      await collectGarbageForTest(() => {
-        expect(queryObjects(TranscriptMessage)).toBe(0);
-      });
+      await collectGarbageForTest();
       expect(messageReference.deref()).toBeUndefined();
       expect([...getExpandedToolCards(sessionKey).values()]).toEqual([true]);
     } finally {

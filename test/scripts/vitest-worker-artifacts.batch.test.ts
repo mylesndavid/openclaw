@@ -82,6 +82,8 @@ const contractsConfig = "test/vitest/vitest.contracts-plugin.config.ts";
 const channelsConfig = "test/vitest/vitest.channels.config.ts";
 const codeModeWorker = "src/agents/code-mode.import-boundary.test.ts";
 const agentsCoreConfig = agentVitestProjectOwners.core.config;
+const discordCapture = "test/e2e/gateway-transcripts-discord-capture.e2e.test.ts";
+const e2eConfig = "test/vitest/vitest.e2e.config.ts";
 
 it.for([
   { name: "worker", args: [coreWorker], prepare: true },
@@ -163,6 +165,7 @@ it.runIf(process.platform !== "win32").for([
       : [
           "ready",
           "code-mode",
+          "capture",
           "failure",
           "cancel",
           "excluded",
@@ -187,12 +190,16 @@ it.runIf(process.platform !== "win32").for([
         ? packageContract
         : mode === "code-mode"
           ? codeModeWorker
-          : coreWorker;
+          : mode === "capture"
+            ? discordCapture
+            : coreWorker;
       const selectedConfig = route.startsWith("contracts-")
         ? contractsConfig
         : mode === "code-mode"
           ? agentsCoreConfig
-          : infraConfig;
+          : mode === "capture"
+            ? e2eConfig
+            : infraConfig;
       const { node } = workerArtifacts.createFixtureCommands();
       const directory = workerArtifacts.fixtureDirectory();
       const compiled = path.join(directory, "compiled.jsonl");
@@ -342,6 +349,7 @@ process.exitCode = await runVitestBatch({config:${JSON.stringify(infraConfig)},a
         ...process.env,
         // Each nested invocation owns its selection, independently of the outer tooling shard.
         OPENCLAW_VITEST_INCLUDE_FILE: includeFile,
+        OPENCLAW_E2E_USE_PREBUILT_DIST: "1",
         ...fixturePreloadEnv(preload, "node"),
         ...(route === "batch"
           ? {
@@ -359,7 +367,8 @@ process.exitCode = await runVitestBatch({config:${JSON.stringify(infraConfig)},a
         mode === "ready" ||
         mode === "include-worker" ||
         mode === "channels" ||
-        mode === "code-mode";
+        mode === "code-mode" ||
+        mode === "capture";
       const prepared = ready || mode === "failure" || mode === "cancel";
       expect(fs.existsSync(compilerReceipt)).toBe(prepared);
       if (mode === "failure" || mode === "cancel") {

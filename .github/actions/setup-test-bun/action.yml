@@ -12,27 +12,37 @@ runs:
           exit 1
         fi
 
-        # Built from steipete/bun commit 9ebee1257c3bcf6ca9764f408c2432ad9e8934b0.
-        # Includes per-user node shims, private fallback, and executable NODE paths.
-        # WebKit commit 440fe0f8519ea493007a5161813e45b2aeaca2c5.
-        # Includes the FTL bounds-check and Intl.Segmenter fixes.
+        # Built from openclaw/bun commit 57fadf566d797870759abbe103206ee3981a9323.
+        # WebKit commit f20ce7744553c910bcf16a33faf976af208de091.
         bun_dir="$(mktemp -d "$RUNNER_TEMP/openclaw-test-bun.XXXXXX")"
-        archive="$bun_dir/bun-linux-x64.gz"
-        curl --fail --location --no-progress-meter --show-error \
-          --connect-timeout 10 --max-time 300 \
-          --retry 3 --retry-all-errors --retry-max-time 300 \
-          --output "$archive" \
-          "https://github.com/steipete/bun/releases/download/openclaw-ci-9ebee125-webkit-440fe0f8/bun-linux-x64.gz" \
-          2> >(sed 's/^Warning: /::warning::/' >&2)
+        release_url="https://github.com/openclaw/bun/releases/download/openclaw-v1.4.3-20260930-57fadf566d-webkit-f20ce77445"
+        archive="$bun_dir/bun-linux-x64.zip"
+        for asset in bun-linux-x64.zip SHA256SUMS manifest.json; do
+          curl --fail --location --no-progress-meter --show-error \
+            --connect-timeout 10 --max-time 300 \
+            --retry 3 --retry-all-errors --retry-max-time 300 \
+            --output "$bun_dir/$asset" "$release_url/$asset" \
+            2> >(sed 's/^Warning: /::warning::/' >&2)
+        done
+        # Check published metadata as well as the independent pins below.
+        (
+          cd "$bun_dir"
+          for asset in bun-linux-x64.zip manifest.json; do
+            awk -v asset="$asset" '$2 == asset { print }' SHA256SUMS | sha256sum --check -
+          done
+        )
         printf '%s  %s\n' \
-          '27b37643fa5a361079e44507fc07ac6d2588058ae528cbf02fc6e6f814403611' \
+          '62452aa42cd54ce1bcd6862fc4305a59f515561b0d80d90bff7b39e7d8c5a05d' \
           "$archive" | sha256sum --check -
-        gzip --decompress --stdout "$archive" > "$bun_dir/bun"
+        unzip -p "$archive" bun-linux-x64/bun > "$bun_dir/bun"
         printf '%s  %s\n' \
-          'e1adaca9e59f8f15677dc30a07917f2a30cee0dd6ddba10d606c9309177d142b' \
+          "$(jq -er '.assets[] | select(.name == "bun-linux-x64.zip") | .executable.sha256' "$bun_dir/manifest.json")" \
+          "$bun_dir/bun" | sha256sum --check -
+        printf '%s  %s\n' \
+          '1bca0225c01e3e0adabecec958f66c8e4cdfb16fbc3fbdef2f4aa145f13538d9' \
           "$bun_dir/bun" | sha256sum --check -
         chmod 755 "$bun_dir/bun"
         "$bun_dir/bun" --version
         "$bun_dir/bun" --revision
-        rm "$archive"
+        rm "$archive" "$bun_dir/SHA256SUMS" "$bun_dir/manifest.json"
         echo "$bun_dir" >> "$GITHUB_PATH"

@@ -127,9 +127,10 @@ future-attempt artifacts remain invalid.
 ### Test runtime selection
 
 Linux test shards select Bun through `scripts/lib/ci-test-runtime.mts`. The
-ordinary and isolated unit-fast lanes partition their existing file inventories: files with known Bun
-failures or additional skips stay on Node, and the compatible remainder runs on
-Bun. Those Node files still execute; they are not excluded from CI.
+ordinary unit-fast lane partitions its existing file inventory: files with known
+Bun failures or additional skips stay on Node, and the compatible remainder runs
+on Bun. Those Node files still execute; they are not excluded from CI. The
+isolated unit-fast lane runs completely on Bun.
 
 Bun test processes disable the Node-compatible bytecode cache because the pinned
 fork generates bytecode during Vitest teardown. Bun's transpiler cache and the
@@ -159,25 +160,25 @@ before the compatible Bun/Vitest and native Bun portions in that same slot;
 every result remains required. Native execution adds no CI jobs or worker fanout.
 
 The process lane runs `terminal-pty-bun.test.ts` on Bun and retains its other
-files on Node. Its native real-PTY block skips when the pinned Bun build lacks
-`Bun.Terminal.pause()` and `resume()`, as the current pin does. macOS and Linux
-select the native PTY without Node only on builds with that capability, such as
-the OpenClaw Bun fork builds that also carry the macOS child-exit fix. Other Bun
+files on Node. The pinned fork supports `Bun.Terminal.pause()` and `resume()`,
+so its native real-PTY cases run on Linux. macOS and Linux select the native PTY
+without Node on builds with that capability, including the pinned fork's macOS
+child-exit fix. Other Bun
 releases keep the Node helper, which requires an installed Node runtime and
 skips Bun's `node` shim when selecting it. Windows keeps `node-pty`.
-
-TypeScript compiler analysis suites also stay on Node because the synchronous
-native compiler API requires Node child-process pipe handles. This includes
-compiler assertions in mixed runtime suites; their cases remain enabled.
-The Code Mode executor and Markdown chunking suites run with Vitest on Bun using
-the fork's diagnostics-channel and `Intl.Segmenter` fixes.
-Plugin runtime retention tests remain on Node after earlier fork builds failed
-retirement GC assertions in a complete stripe and focused replay. Their
-cases retain their original assertions and deadlines; this suite has not been
-qualified for Bun.
-The complete fake-timer lane also supports Bun. Control UI keeps its GC-sensitive
-retention proofs (`chat-pane-retention.test.ts`, `chat-thread-retention.test.ts`,
-and `usage-page-retention.test.ts`) on Node and runs the remaining files on Bun.
+The qualified TypeScript compiler analysis files and `src/library.test.ts` run
+on Bun. The pinned fork exposes the child-process pipe handles and stream
+reference controls used by TypeScript's synchronous native API. Compiler
+assertions in mixed runtime suites remain enabled.
+The Code Mode executor runs with Vitest on Bun using the fork's
+copy-on-write diagnostics-channel subscriber handling. Markdown render-aware
+chunking stays on Node because the pinned WebKit lacks the `Intl.Segmenter`
+surrogate-boundary fix needed by that suite.
+The complete fake-timer lane, plugin and proxy retention tests, and Control UI
+support Bun. UI retains its six GC assertions in `chat-pane-retention.test.ts`,
+`chat-thread-retention.test.ts`, and `usage-page-retention.test.ts`; they use
+runtime-neutral collection and WeakRef checks. V8-specific heap and worker-limit
+assertions and the remaining qualified Node-only selections still run on Node.
 The missing-Docker test also runs on Bun, using an empty executable directory
 instead of an empty `PATH`, which Bun resolves through its default search path.
 Other families retain Node until they pass on the pinned fork within their
@@ -227,12 +228,10 @@ Current-runner targets use three native shards and three workers per row,
 including exact-target Full Release Validation dispatches. Historical
 compatibility targets retain their unsharded package command.
 The UI runtime partition is applied after Vitest selects each native shard, so
-files keep their original shard ownership. Compatible PR selections run Bun
-first and record Vitest's original shard inventory. After successful, joined
-completion, a shard with no Node-only files omits that Node process. Missing or
-invalid inventory evidence retains the Node run. Dual validation runs
-the complete UI selection on Node, then excludes the three GC-sensitive files from Bun.
-Their assertions remain required on Node, with no added skips.
+files keep their original shard ownership. Compatible PR selections run the
+complete shard on Bun. Dual validation runs the complete UI selection on Node
+and then on Bun, including the six retention assertions. Partial runtime
+partitions still require the original shard inventory before omitting Node work.
 Partitions without browser files retain browser discovery for native sharding
 but omit Chromium version probing and Playwright's speculative browser startup.
 
@@ -254,24 +253,28 @@ Node seed, with separate transform-cache leaves.
 The same owner sets `MIMALLOC_PURGE_HOLES_MIN_INTERVAL=1000` to reduce allocator
 scavenger work between short UI updates; normal reclamation and default heaps remain enabled.
 
-The test-runtime setup action installs a checksum-pinned build of the Bun fork
+The test-runtime setup action installs a checksum-pinned prerelease of `openclaw/bun`
 only for jobs that need it. The source commit, archive checksum, and executable
 checksum live together in `.github/actions/setup-test-bun/action.yml`.
+The action checks the release zip and manifest against `SHA256SUMS`, then checks
+the extracted executable against the manifest. Independent archive and executable
+pins keep the selected bytes fixed even if release metadata changes.
 The fork owns the backing storage of `node:vm` cached bytecode, so compiled
 functions remain valid after the original cache buffer is garbage-collected.
 It also keeps allocator ownership during zero-time event-loop polls, while
 retaining the idle handoff for polls that can block.
 
-The pinned build pairs Bun `9ebee1257c3bcf6ca9764f408c2432ad9e8934b0` with WebKit
-`440fe0f8519ea493007a5161813e45b2aeaca2c5`, containing the
-`caa5d805b646edc59ca0d12b49a7a574f942dedb` FTL backport.
-The backport preserves string bounds checks through FTL dead-code elimination,
+The pinned build pairs Bun `57fadf566d797870759abbe103206ee3981a9323` with WebKit
+`f20ce7744553c910bcf16a33faf976af208de091` in prerelease
+`openclaw-v1.4.3-20260930-57fadf566d-webkit-f20ce77445`.
+This WebKit build preserves string bounds checks through FTL dead-code elimination,
 fixing the CSS tokenizer's end-of-input loop.
 The fork keeps the lifecycle-script `node` shim in a per-user directory, with a
 private fallback when that directory is unusable. `NODE` and `npm_node_execpath`
 point to the executable in either location. This lets several accounts on one
 host run Bun installs without Node. The same build retains the tsconfig,
-diagnostics-channel, inspector/GC, and `Intl.Segmenter` fixes.
+diagnostics-channel, and inspector/GC fixes. The render-aware chunking exception
+above preserves coverage for the missing WebKit segmentation fix.
 Its prerelease tag includes both source revisions because `Bun.revision` alone
 does not distinguish builds linked against different WebKit revisions.
 
@@ -741,7 +744,7 @@ automation account, and SecOps-owned-path cases before declaring enforcement act
 3. `build-artifacts` and the locale checks overlap with the fast Linux lanes. Control UI and native app source PRs exclude generated locale snapshots/resources; their serialized refresh workflows repair and auto-merge isolated generated PRs in the background. Source CI still blocks stale source inventories and unsafe localization calls. Generated PRs, manual CI, and release prep enforce full translated/platform-generated parity. Canonical `release/YYYY.M.PATCH` branches may include release-prep locale repairs with the other generated release output.
 4. Baseline ratchets and selected Node test shards start independently after preflight. Node rows consume the manifest, not ratchet outputs. `ci-gate` still requires every selected ratchet to pass, and the PR failure monitor still cancels remaining work after a ratchet failure. Frozen targets retain their existing ratchet selection.
 5. Current plans with guards run `check:coercion-helpers` there once; fast-only plans retain its standalone row. Other platform and runtime lanes fan out independently: `checks-fast-core` (including startup corpus), `checks-fast-contracts-plugins`, `checks-fast-contracts-channels`, `checks-windows`, `macos-node`, `macos-swift`, `ios-build`, the screenshot shards, and `android`.
-6. For canonical-repository PRs selecting Node rows, `pr-fail-fast` watches the first attempt and classifies failures before cancelling eligible same-repository work. Fork PR monitoring is read-only and never requests cancellation; unknown failures remain blocking through normal lane results. Only that job has `actions: write`. It starts after preflight and observes failures while the installed check planner queues or runs. Clean completion combines preflight's other job counts with the planner's exact admitted check count, published by its successful `CI check job count v1: N` step. It rechecks the current PR head, auto-merge setting, and newer runs before cancellation. Retries retain native matrix fail-fast. The monitor checks out trusted base-revision scripts. It adds one 4-vCPU Blacksmith registration per eligible same-repository PR, or uses hosted Ubuntu for fork PRs and under the outage override. The hybrid hosted admission owner reserves that fork row before spending the unchanged 45-row optional-offload budget. Main, manual runs, and retries do not start it. Observation ends before the monitor's job limit; ordinary lane verification still owns the result when no failure was observed. Partial reruns ignore monitor causes and results retained from earlier attempts.
+6. For canonical-repository PRs selecting Node rows, `pr-fail-fast` watches the first attempt and classifies failures before cancelling eligible same-repository work. Fork PR monitoring is read-only and never requests cancellation; unknown failures remain blocking through normal lane results. Only that job has `actions: write`. It starts after preflight and observes failures while the installed check planner queues or runs. Clean completion combines preflight's other job counts with the planner's exact admitted check count, published by its successful `CI check job count v1: N` step. It rechecks the current PR head, auto-merge setting, and newer runs before cancellation. Canonical PR reruns let every Node matrix leg finish so inherited main failures cannot cancel the remaining proof needed for an explicit admin landing. Native matrix fail-fast applies only to PRs whose workflow repository is not `openclaw/openclaw`, on any attempt. The monitor checks out trusted base-revision scripts. It adds one 4-vCPU Blacksmith registration per eligible same-repository PR, or uses hosted Ubuntu for fork PRs and under the outage override. The hybrid hosted admission owner reserves that fork row before spending the unchanged 45-row optional-offload budget. Main, manual runs, and retries do not start it. Observation ends before the monitor's job limit; ordinary lane verification still owns the result when no failure was observed. Partial reruns ignore monitor causes and results retained from earlier attempts.
 7. `openclaw/ci-gate` waits for every selected lane. Preflight and security must succeed; downstream jobs may skip only when unselected by the manifest and existing event, runner, and compatibility conditions. An unexpected selected skip or any failed or canceled downstream job fails the aggregate. Failure-triggered cancellation preserves the originating job's identity and runs the gate to report failure, including a cancellation request with an uncertain response. The existing critical-path route already keeps trusted hybrid first attempts on the 4-vCPU Blacksmith class. A first-attempt same-repository failure also uses that class under the default or explicit Blacksmith profile so hosted assignment cannot consume the cancellation grace period. Retries and the GitHub outage override retain hosted aggregation. A superseded run without a recorded failure cause skips final reporting and releases its concurrency slot as before.
 
 Bot-authored, same-repository PRs containing only generated native locale data

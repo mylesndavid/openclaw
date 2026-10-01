@@ -7,13 +7,20 @@ import {
   matchesVitestCliSelection,
   matchesVitestGlob,
   relativizeScopedPatterns,
+  sharedVitestExcludePatterns,
 } from "../../test/vitest/vitest.pattern-file.ts";
 import { controlUiE2eTestGlobs, controlUiTestGlobs } from "../../test/vitest/vitest.ui-paths.mjs";
 import {
   getUnitFastIsolatedTestFiles,
   getUnitFastTestFiles,
+  getUnitFastTestFilesForIncludePatterns,
   getUnitFastTimerTestFiles,
 } from "../../test/vitest/vitest.unit-fast-paths.mjs";
+import {
+  filterUnitConfigTestFiles,
+  unitTestAdditionalExcludePatterns,
+  unitTestIncludePatterns,
+} from "../../test/vitest/vitest.unit-paths.mjs";
 import { buildVitestRunPlans } from "../test-projects.test-support.mts";
 import nativeBunQualification from "./ci-test-native-bun-qualification.json" with { type: "json" };
 import { vitestOptionConsumesNextArg } from "./vitest-cli-mode.mts";
@@ -66,34 +73,16 @@ const nativeBunHelperHashes: Readonly<Record<string, Readonly<Record<string, str
   nativeBunQualification.helpers;
 const bunCompatibleConfigs = new Set([
   "test/vitest/vitest.unit-fast-fake-timers.config.ts",
+  "test/vitest/vitest.unit-fast-isolated.config.ts",
   "test/vitest/vitest.extension-memory.config.ts",
   gatewayClientConfig,
 ]);
 // Measured whole-file admission; the rest of agents-support retains Node.
 const bunCompatibleAgentSupportFiles = ["src/agents/worktrees/service.removal-recovery.test.ts"];
-// TypeScript's synchronous native API uses Node child-process pipe handles.
-// Keep these compiler assertions on Node, including those in mixed runtime suites.
-const nativeCompilerTestFiles = [
-  "src/agents/agent-bundle-mcp-requester-connect.import-boundary.test.ts",
-  "src/agents/agent-model-discovery.imports.test.ts",
-  "src/agents/code-mode.auto-results.test.ts",
-  "src/agents/harness/native-hook-relay.imports.test.ts",
-  "src/auto-reply/reply/get-reply.imports.test.ts",
-  "src/cli/program/register.database.import-boundary.test.ts",
-  "src/plugin-sdk/provider-tools.test.ts",
-  "test/scripts/audit-control-ui-dead-css.test.ts",
-  "test/scripts/canvas-cli-import-closure.test.ts",
-  "test/scripts/check-session-accessor-boundary.test.ts",
-  "test/scripts/check-session-transcript-reader-boundary.test.ts",
-  "test/scripts/check-sqlite-transaction-boundary.test.ts",
-  "test/scripts/native-typescript.test.ts",
-  "test/scripts/nodes-cli-import-closure.test.ts",
-  "test/scripts/ts-topology.test.ts",
-  "test/scripts/typecheck-inert.test.ts",
-  "test/test-helper-extension-import-boundary.test.ts",
-];
-// Known runtime compatibility failures keep every case covered on Node.
-// The canonical inventories continue to own all other membership.
+const embeddedRunOwner = agentVitestProjectOwners.embeddedRun;
+// src/state/openclaw-state-lease.retention.test.ts stays with its default Node owner:
+// cold fs-safe native initialization roots the caller's ALS through custom_gc.
+// The dependency initialization owner needs a fix; this is not V8-specific proof.
 const runtimePartitions = new Map<
   string,
   {
@@ -118,16 +107,15 @@ const runtimePartitions = new Map<
     {
       files: (_cwd, includePatterns) => unitFastFiles(includePatterns),
       nodeRequired: new Set([
-        ...nativeCompilerTestFiles,
+        // The pinned WebKit still misidentifies UTF-16 surrogate-pair segment boundaries.
+        "packages/markdown-core/src/render-aware-chunking.test.ts",
         "src/cli/cli-process-diagnostics.test.ts",
-        // Native heap accounting, GC, and Worker limits require V8.
+        // Asserts V8 used_heap_size deltas, cachedDataVersionTag stability, explicit GC,
+        // and Worker resourceLimits.maxOldGenerationSizeMb propagation.
         "src/infra/worker-task-pool.memory.test.ts",
-        // Retained plugin-registry GC proof still requires Node.
-        "src/plugins/runtime.retention.test.ts",
         "src/process/spawn-broker/callback-context.test.ts",
         "src/process/spawn-broker/cleanup.test.ts",
         "src/process/spawn-broker/handoff.test.ts",
-        "src/process/spawn-broker/proxy-retention.test.ts",
         "src/process/spawn-broker/relay.test.ts",
         "src/process/spawn-broker/startup.test.ts",
         "src/process/spawn-broker/stdin-handoff.test.ts",
@@ -139,10 +127,43 @@ const runtimePartitions = new Map<
     },
   ],
   [
-    "test/vitest/vitest.unit-fast-isolated.config.ts",
+    embeddedRunOwner.config,
     {
-      files: (_cwd, includePatterns) => getUnitFastIsolatedTestFiles(includePatterns),
-      nodeRequired: new Set(nativeCompilerTestFiles),
+      files: (cwd) =>
+        globSync(embeddedRunOwner.include, {
+          cwd,
+          exclude: [
+            ...sharedVitestExcludePatterns,
+            ...getUnitFastTestFilesForIncludePatterns(embeddedRunOwner.include),
+            ...embeddedRunOwner.exclude,
+          ],
+        })
+          .map((file) => file.replaceAll("\\", "/"))
+          .toSorted(),
+      // Only the runtime-neutral transcript lifecycle contract is qualified here.
+      nodeRequired: (file) =>
+        file !== "src/agents/embedded-agent-runner/run/attempt-transcript-lifecycle.test.ts",
+    },
+  ],
+  [
+    "test/vitest/vitest.unit.config.ts",
+    {
+      files: unitFiles,
+      // Only the library's native-compiler assertions are qualified in this owner.
+      nodeRequired: (file) => file !== "src/library.test.ts",
+    },
+  ],
+  [
+    "test/vitest/vitest.unit-src.config.ts",
+    {
+      files: (cwd) =>
+        unitFiles(cwd).filter(
+          (file) =>
+            file.startsWith("src/") &&
+            !file.startsWith("src/acp/") &&
+            !file.startsWith("src/security/"),
+        ),
+      nodeRequired: (file) => file !== "src/library.test.ts",
     },
   ],
   [
@@ -152,12 +173,7 @@ const runtimePartitions = new Map<
         globSync(controlUiTestGlobs, { cwd, exclude: controlUiE2eTestGlobs })
           .map((file) => file.replaceAll("\\", "/"))
           .toSorted(),
-      // Bun GC can retain released chat and overview payloads; keep their retention proof on Node.
-      nodeRequired: new Set([
-        "ui/src/pages/chat/chat-pane-retention.test.ts",
-        "ui/src/pages/chat/chat-thread-retention.test.ts",
-        "ui/src/pages/usage/usage-page-retention.test.ts",
-      ]),
+      nodeRequired: new Set(),
       includeAfterShard: true,
     },
   ],
@@ -212,6 +228,19 @@ function qualifiedNativeBunFiles(files: readonly string[], cwd: string): string[
         matchesNativeBunSource(helper, sha256, cwd),
       ),
   );
+}
+
+function unitFiles(cwd: string): string[] {
+  const fastFiles = new Set(getUnitFastTestFiles());
+  return filterUnitConfigTestFiles(
+    globSync(unitTestIncludePatterns, {
+      cwd,
+      exclude: [...sharedVitestExcludePatterns, ...unitTestAdditionalExcludePatterns],
+    }),
+  )
+    .map((file) => file.replaceAll("\\", "/"))
+    .filter((file) => !fastFiles.has(file))
+    .toSorted();
 }
 
 function selectionVitestArgs(selection: TestSelection): string[] | undefined {
