@@ -4,6 +4,15 @@ The `agentsapi` harness runs commands and file operations in an OpenAI-hosted Li
 VM by default, while OpenClaw handles channel messaging and configured Gateway
 tools. It uses OpenAI API-key authentication.
 
+API keys authenticate requests and are not part of the native conversation's
+identity. Rotating the key used by the harness preserves existing session IDs;
+subsequent attempts use the newly resolved key. The replacement key must have API
+access to those sessions. Authentication or permission errors surface normally
+without resetting the saved binding.
+
+Model, environment, and effective HTTP MCP configuration changes still require a
+session reset. Bindings created before this change are not migrated or supported.
+
 Start with the [setup and supported features guide](https://docs.openclaw.ai/plugins/agentsapi).
 Enable the `agentsapi` plugin and select it for the model through
 `agents.defaults.models["openai/<model>"].agentRuntime.id: "agentsapi"`.
