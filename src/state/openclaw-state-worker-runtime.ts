@@ -142,6 +142,9 @@ export function executeSharedStateCommand(
         ) ?? { entry: null, expectedToken: null })
       : read(open().db);
   }
+  if (command.type === "tui.lastSession.clear") {
+    return clearRetiredTuiPointers(new Set(command.input.retiredSessionKeys), stateOptions(), open);
+  }
   const database = open();
   if (command.type === "githubPublication.prepareSessionReceiptDeletion") {
     return readSessionReceiptDeletionIdentitiesInDatabase(database, command.input);
@@ -191,13 +194,6 @@ export function executeSharedStateCommand(
   };
   if (command.type === "tui.lastSession.write") {
     return writeConfigMachineState(command.input.stateKey, command.input.sessionKey, writeOptions);
-  }
-  if (command.type === "tui.lastSession.clear") {
-    return clearRetiredTuiPointers(
-      command.input.stateKeys,
-      new Set(command.input.retiredSessionKeys),
-      writeOptions,
-    );
   }
   if (command.type === "sandboxRegistry.insertIfMissing") {
     return importSandboxRegistryRow(command.input, writeOptions);
