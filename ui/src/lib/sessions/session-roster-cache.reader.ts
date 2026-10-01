@@ -15,7 +15,7 @@ import {
   SESSION_ROSTER_STORE_NAME,
   SESSION_ROSTER_MAX_AGE_MS,
   SESSION_ROSTER_MAX_BYTES,
-  sessionRosterCacheGeneration,
+  sessionRosterGeneration,
   type RosterExpectation,
   type SessionRosterCache,
   type SessionRosterRecord,
@@ -160,7 +160,7 @@ export async function readSessionRoster(
   expected: RosterExpectation,
   generation: number,
 ): Promise<SessionRosterRecord | null> {
-  if (generation !== sessionRosterCacheGeneration) {
+  if (generation !== sessionRosterGeneration(scope)) {
     return null;
   }
   const database = await openSessionRosterDatabase();
@@ -174,7 +174,7 @@ export async function readSessionRoster(
       transaction.objectStore(SESSION_ROSTER_STORE_NAME).get(scope),
     );
     await completed;
-    if (value === undefined || generation !== sessionRosterCacheGeneration) {
+    if (value === undefined || generation !== sessionRosterGeneration(scope)) {
       return null;
     }
     const record = parseSessionRosterRecord(value);

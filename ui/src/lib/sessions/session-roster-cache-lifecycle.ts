@@ -3,10 +3,15 @@ import {
   readOfflineStorageScope,
   resolveBootRecordAuth,
   subscribeBootRecordChanges,
-  bootRecordAccountMatches,
+  bootRecordOwner,
+  sameBootRecordOwner,
 } from "../../app/boot-record.ts";
 import type { SessionGateway, SessionListOptions, SessionState } from "./session-capability.ts";
-import { sessionRosterCache, type SessionRosterCacheOptions } from "./session-roster-cache.ts";
+import {
+  sessionRosterCache,
+  sessionRosterScope,
+  type SessionRosterCacheOptions,
+} from "./session-roster-cache.ts";
 
 export function createSessionRosterCacheLifecycle(
   gateway: SessionGateway,
@@ -27,15 +32,14 @@ export function createSessionRosterCacheLifecycle(
     const account =
       readOfflineStorageScope({ client: gateway.snapshot.client }) ??
       options.bootRecord?.recoveryScope;
-    return gatewayScope && account
-      ? `account:${JSON.stringify([gatewayScope, account])}`
-      : gatewayScope;
+    return gatewayScope ? sessionRosterScope(gatewayScope, account) : undefined;
   };
   let cachedScope = currentScope();
   let cachedConnectionRevision = gateway.connectionRevision;
   let cachedProfileId = options.bootRecord?.profileId;
+  let admittedOwner = options.bootRecord ? bootRecordOwner(options.bootRecord) : undefined;
   const retirement = new AbortController();
-  const stopRetirement = subscribeBootRecordChanges(({ scope, replacement }) => {
+  const stopRetirement = subscribeBootRecordChanges(({ scope, replacement, retiredOwner }) => {
     if (
       !scope ||
       scope ===
@@ -43,14 +47,20 @@ export function createSessionRosterCacheLifecycle(
           ? gatewayCredentialScope(gateway.connection.gatewayUrl)
           : options.bootRecord?.scope)
     ) {
+      const account =
+        gateway.snapshot.hello?.auth?.recoveryScope ??
+        readOfflineStorageScope({ client: gateway.snapshot.client }) ??
+        options.bootRecord?.recoveryScope;
+      const capturedOwner = admittedOwner;
+      const owner = account ? { recoveryScope: account } : capturedOwner;
+      if (replacement && !sameBootRecordOwner(replacement, capturedOwner)) {
+        admittedOwner = undefined;
+      }
       if (
-        bootRecordAccountMatches(
-          replacement,
-          gateway.snapshot.hello?.auth?.recoveryScope ??
-            readOfflineStorageScope({ client: gateway.snapshot.client }) ??
-            options.bootRecord?.recoveryScope,
-          gateway.snapshot.selfUser?.id ?? cachedProfileId,
-        )
+        (retiredOwner &&
+          !sameBootRecordOwner(retiredOwner, owner) &&
+          !sameBootRecordOwner(retiredOwner, capturedOwner)) ||
+        sameBootRecordOwner(replacement, owner)
       ) {
         return;
       }
@@ -92,6 +102,13 @@ export function createSessionRosterCacheLifecycle(
   return {
     settled,
     synchronize(snapshot: SessionGateway["snapshot"]): void {
+      if (
+        gateway.connectionRevision !== cachedConnectionRevision ||
+        (gateway.connection &&
+          options.bootRecord?.scope !== gatewayCredentialScope(gateway.connection.gatewayUrl))
+      ) {
+        admittedOwner = undefined;
+      }
       if (snapshot.phase === "connected") {
         retirement.abort();
       }

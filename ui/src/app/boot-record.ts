@@ -11,7 +11,8 @@ let bootRecordGeneration = 0;
 type BootRecordChange = {
   scope?: string;
   external?: true;
-  replacement?: Pick<BootRecord, "recoveryScope" | "profileId">;
+  replacement?: BootRecordOwner;
+  retiredOwner?: BootRecordOwner;
 };
 const retirementListeners = new Set<(change: BootRecordChange) => void>();
 export function subscribeBootRecordChanges(
@@ -45,16 +46,30 @@ function notifyBootRecordChange(change: BootRecordChange): void {
   }
 }
 
-export function bootRecordAccountMatches(
-  replacement: BootRecordChange["replacement"],
-  recoveryScope: string | undefined,
-  profileId?: string | null,
+export type BootRecordOwner =
+  | { recoveryScope: string }
+  | { recoveryScope?: undefined; authMethod: string; credential: string };
+
+export function bootRecordOwner(
+  record: Pick<BootRecord, "recoveryScope" | "authMethod" | "credential">,
+): BootRecordOwner {
+  return record.recoveryScope
+    ? { recoveryScope: record.recoveryScope }
+    : { authMethod: record.authMethod, credential: record.credential };
+}
+
+export function sameBootRecordOwner(
+  left: BootRecordOwner | undefined,
+  right: BootRecordOwner | undefined,
 ): boolean {
-  return Boolean(
-    recoveryScope &&
-    replacement?.recoveryScope === recoveryScope &&
-    (profileId == null || replacement.profileId === profileId),
-  );
+  if (!left || !right) {
+    return false;
+  }
+  return left.recoveryScope !== undefined
+    ? left.recoveryScope === right.recoveryScope
+    : right.recoveryScope === undefined &&
+        left.authMethod === right.authMethod &&
+        left.credential === right.credential;
 }
 
 function credentialFingerprint(credential: string | null | undefined): string | null {
@@ -66,7 +81,9 @@ export function resolveBootRecordAuth(
   auth: { method?: string; deviceToken?: string; recoveryScope?: string } | undefined,
   token?: string,
 ): Pick<BootRecord, "authMethod" | "credential"> | null {
-  const method = auth?.method;
+  // Bootstrap itself is single-use. The hello can issue the reusable device
+  // grant that the browser client has stored before publishing this admission.
+  const method = auth?.method === "bootstrap-token" ? "device-token" : auth?.method;
   if (
     auth?.recoveryScope?.trim() &&
     method &&
@@ -133,12 +150,19 @@ export function readBootRecord(
       if (
         isBootRecord(record) &&
         record.scope === scope &&
-        (["trusted-proxy", "tailscale", "password"].includes(record.authMethod)
-          ? credentialForMethod(record.authMethod) === ""
-          : record.credential === credentialFingerprint(credentialForMethod(record.authMethod))) &&
         Date.now() - record.savedAt <= BOOT_RECORD_MAX_AGE
       ) {
-        return record;
+        // A different document’s credential selection cannot retire this owner.
+        // Only malformed/expired data is eviction; non-admission is a pure read.
+        try {
+          const credential = credentialForMethod(record.authMethod);
+          const admitted = ["trusted-proxy", "tailscale", "password"].includes(record.authMethod)
+            ? credential === ""
+            : record.credential === credentialFingerprint(credential);
+          return admitted ? record : null;
+        } catch {
+          return null;
+        }
       }
     }
   } catch {
@@ -150,7 +174,42 @@ export function readBootRecord(
   return null;
 }
 
-export function clearBootRecords(scope?: string): void {
+/** Cancel an owned publication without deleting a peer’s persisted admission. */
+export function retirePendingBootRecord(scope: string | undefined, owner: BootRecordOwner): void {
+  if (
+    pending &&
+    pending.record.scope === scope &&
+    sameBootRecordOwner(bootRecordOwner(pending.record), owner)
+  ) {
+    pending = undefined;
+    clearTimeout(timer);
+    timer = undefined;
+  }
+}
+
+function removeOwnedBootRecord(scope: string | undefined, owner: BootRecordOwner): void {
+  try {
+    const storage = getSafeLocalStorage();
+    const key = BOOT_RECORD_PREFIX + scope;
+    const raw = storage?.getItem(key);
+    const record: unknown = raw ? JSON.parse(raw) : null;
+    if (
+      isBootRecord(record) &&
+      record.scope === scope &&
+      sameBootRecordOwner(bootRecordOwner(record), owner)
+    ) {
+      storage?.removeItem(key);
+    }
+  } catch {}
+}
+
+export function clearBootRecords(scope?: string, owner?: BootRecordOwner): void {
+  if (owner) {
+    retirePendingBootRecord(scope, owner);
+    removeOwnedBootRecord(scope, owner);
+    notifyBootRecordChange({ scope, retiredOwner: owner });
+    return;
+  }
   bootRecordGeneration += 1;
   notifyBootRecordChange({ scope });
   try {
@@ -228,14 +287,15 @@ function flushBootRecord(): void {
     };
     const json = JSON.stringify({ ...record, agents });
     if (new TextEncoder().encode(json).length > BOOT_RECORD_MAX_BYTES) {
-      storage?.removeItem(key);
+      removeOwnedBootRecord(record.scope, bootRecordOwner(record));
     } else {
       storage?.setItem(key, json);
+      if (storage?.getItem(key) === json) {
+        notifyBootRecordChange({ scope: record.scope, replacement: bootRecordOwner(record) });
+      }
     }
   } catch {
-    try {
-      storage?.removeItem(key);
-    } catch {}
+    removeOwnedBootRecord(record.scope, bootRecordOwner(record));
   }
 }
 
@@ -268,7 +328,20 @@ if (
           next.scope === scope &&
           Date.now() - next.savedAt <= BOOT_RECORD_MAX_AGE
         ) {
-          replacement = { recoveryScope: next.recoveryScope, profileId: next.profileId };
+          replacement = bootRecordOwner(next);
+        }
+      } catch {}
+    }
+    let retiredOwner: BootRecordOwner | undefined;
+    if (
+      event.newValue === null &&
+      event.oldValue &&
+      new TextEncoder().encode(event.oldValue).length <= BOOT_RECORD_MAX_BYTES
+    ) {
+      try {
+        const previous: unknown = JSON.parse(event.oldValue);
+        if (isBootRecord(previous) && previous.scope === scope) {
+          retiredOwner = bootRecordOwner(previous);
         }
       } catch {}
     }
@@ -276,15 +349,13 @@ if (
     // owner; same-account tabs keep their live connection and pending publication.
     if (
       (!scope || pending?.record.scope === scope) &&
-      !bootRecordAccountMatches(
-        replacement,
-        pending?.record.recoveryScope,
-        pending?.record.profileId,
-      )
+      (!retiredOwner ||
+        (pending && sameBootRecordOwner(retiredOwner, bootRecordOwner(pending.record)))) &&
+      !sameBootRecordOwner(replacement, pending ? bootRecordOwner(pending.record) : undefined)
     ) {
       bootRecordGeneration += 1;
     }
-    notifyBootRecordChange({ scope, external: true, replacement });
+    notifyBootRecordChange({ scope, external: true, replacement, retiredOwner });
   });
   window.addEventListener("pagehide", flushBootRecord);
   document.addEventListener("visibilitychange", () => {

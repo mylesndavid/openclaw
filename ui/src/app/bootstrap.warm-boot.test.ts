@@ -272,6 +272,7 @@ describe("warm boot profile validation", () => {
         scope,
         savedAt: Date.now(),
         profileId: cachedProfileId,
+        recoveryScope: "cached-account",
         agents: {
           defaultId: "main",
           mainKey: "main",
@@ -304,7 +305,13 @@ describe("warm boot profile validation", () => {
           hello: {
             type: "hello-ok",
             protocol: 1,
-            auth: { method: "token", role: "operator", scopes: [] },
+            auth: {
+              method: "token",
+              role: "operator",
+              scopes: [],
+              recoveryScope:
+                profileId === cachedProfileId ? "cached-account" : "replacement-account",
+            },
           },
           selfUser: profileId === null ? null : { id: profileId },
         });
@@ -327,6 +334,9 @@ describe("warm boot profile validation", () => {
         // The persisted record gates the next boot, so it must be gone before any lazy cleanup.
         if (clears > 0) {
           expect(localStorage.getItem(BOOT_RECORD_PREFIX + scope)).toBeNull();
+          expect(clearSnapshots).toHaveBeenCalledWith(
+            `scope:${JSON.stringify([scope, "cached-account"])}\u0000`,
+          );
         } else {
           expect(localStorage.getItem(BOOT_RECORD_PREFIX + scope)).not.toBeNull();
         }

@@ -32,7 +32,7 @@ const record = (scope: string, recoveryScope = "account-a"): BootRecord => ({
   sectionOrder: [],
 });
 
-it.each(["first save", "refresh", "different account", "removal"])(
+it.each(["first save", "refresh", "same owner new profile", "different account", "removal"])(
   "handles peer %s against an already authenticated account",
   (operation) => {
     const { gateway, current } = createGatewayStoreTestStore();
@@ -45,10 +45,16 @@ it.each(["first save", "refresh", "different account", "removal"])(
       snapshot: { presence: [{ instanceId: source.instanceId, user: { id: "profile-a" } }] },
     });
     const rejected = vi.fn();
-    const stop = subscribeWarmBootConnection(gateway, undefined, rejected);
+    const stop = subscribeWarmBootConnection(gateway, null, rejected);
     const scope = gatewayCredentialScope(gateway.connection.gatewayUrl);
     const previous = record(scope);
-    const next = operation === "different account" ? record(scope, "account-b") : record(scope);
+    const next =
+      operation === "different account"
+        ? record(scope, "account-b")
+        : {
+            ...record(scope),
+            profileId: operation === "same owner new profile" ? "profile-b" : "profile-a",
+          };
     try {
       window.dispatchEvent(
         new StorageEvent("storage", {
@@ -109,7 +115,7 @@ it.each(["save", "remove", "clear-all"])(
     const { gateway } = createGatewayStoreTestStore();
     gateway.connect();
     const rejected = vi.fn();
-    const stop = subscribeWarmBootConnection(gateway, undefined, rejected);
+    const stop = subscribeWarmBootConnection(gateway, null, rejected);
     const scope = gatewayCredentialScope(gateway.connection.gatewayUrl);
     try {
       window.dispatchEvent(
@@ -122,6 +128,140 @@ it.each(["save", "remove", "clear-all"])(
       expect(gateway.snapshot.phase).toBe("connecting");
       expect(gateway.snapshot.hello).toBeNull();
       expect(rejected).not.toHaveBeenCalled();
+    } finally {
+      stop();
+      gateway.stop();
+    }
+  },
+);
+
+it.each(["other-owner", "site-clear"])("scopes peer retirement for %s", (operation) => {
+  const { gateway, current } = createGatewayStoreTestStore();
+  gateway.connect();
+  const source = current();
+  source.opts.onHello?.({
+    type: "hello-ok",
+    protocol: 1,
+    auth: { role: "operator", scopes: [], method: "trusted-proxy", recoveryScope: "account-a" },
+    snapshot: { presence: [{ instanceId: source.instanceId, user: { id: "profile-a" } }] },
+  });
+  const rejected = vi.fn();
+  const stop = subscribeWarmBootConnection(gateway, null, rejected);
+  const scope = gatewayCredentialScope(gateway.connection.gatewayUrl);
+  const pending = record(scope);
+  persistBootRecord(pending);
+  try {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: operation === "site-clear" ? null : "openclaw.control.bootRecord.v1:" + scope,
+        oldValue: operation === "site-clear" ? null : JSON.stringify(record(scope, "account-b")),
+        newValue: null,
+      }),
+    );
+    window.dispatchEvent(new Event("pagehide"));
+    const retires = operation === "site-clear";
+    expect(gateway.snapshot.phase).toBe(retires ? "stopped" : "connected");
+    expect(rejected).toHaveBeenCalledTimes(retires ? 1 : 0);
+    const saved = localStorage.getItem("openclaw.control.bootRecord.v1:" + scope);
+    expect(saved && JSON.parse(saved)).toEqual(retires ? null : pending);
+  } finally {
+    stop();
+    gateway.stop();
+  }
+});
+
+it("keeps a pending same-owner boot publication through changed profile attribution", () => {
+  const scope = "ws://same-owner.test";
+  const pending = record(scope);
+  const replacement = { ...pending, profileId: "other-profile" };
+  const key = "openclaw.control.bootRecord.v1:" + scope;
+  persistBootRecord(pending);
+  localStorage.setItem(key, JSON.stringify(replacement));
+  window.dispatchEvent(
+    new StorageEvent("storage", {
+      key,
+      oldValue: JSON.stringify(pending),
+      newValue: JSON.stringify(replacement),
+    }),
+  );
+  window.dispatchEvent(new Event("pagehide"));
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual(pending);
+});
+
+it.each(["unreplaced", "local replacement", "peer replacement"])(
+  "tracks captured legacy admission after hello until %s",
+  (publication) => {
+    const { gateway, current } = createGatewayStoreTestStore();
+    const scope = gatewayCredentialScope(gateway.connection.gatewayUrl);
+    const legacy: BootRecord = {
+      ...record(scope),
+      recoveryScope: undefined,
+      authMethod: "token",
+      credential: "legacy-fingerprint",
+    };
+    const key = "openclaw.control.bootRecord.v1:" + scope;
+    localStorage.setItem(key, JSON.stringify(legacy));
+    const rejected = vi.fn();
+    const stop = subscribeWarmBootConnection(gateway, legacy, rejected);
+    try {
+      gateway.connect();
+      const source = current();
+      source.opts.onHello?.({
+        type: "hello-ok",
+        protocol: 1,
+        auth: { role: "operator", scopes: [], method: "trusted-proxy", recoveryScope: "account-a" },
+        snapshot: { presence: [{ instanceId: source.instanceId, user: { id: "profile-a" } }] },
+      });
+      if (publication === "unreplaced") {
+        persistBootRecord(record(scope));
+      }
+      if (publication !== "unreplaced") {
+        const next = record(scope);
+        if (publication === "local replacement") {
+          persistBootRecord(next);
+          window.dispatchEvent(new Event("pagehide"));
+        } else {
+          localStorage.setItem(key, JSON.stringify(next));
+          window.dispatchEvent(
+            new StorageEvent("storage", {
+              key,
+              oldValue: JSON.stringify(legacy),
+              newValue: JSON.stringify(next),
+            }),
+          );
+        }
+      }
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key,
+          oldValue: JSON.stringify({ ...legacy, credential: "foreign-fingerprint" }),
+          newValue: null,
+        }),
+      );
+      expect(gateway.snapshot.phase).toBe("connected");
+      expect(rejected).not.toHaveBeenCalled();
+      window.dispatchEvent(
+        new StorageEvent("storage", { key, oldValue: JSON.stringify(legacy), newValue: null }),
+      );
+      const retired = publication === "unreplaced";
+      expect(gateway.snapshot.phase).toBe(retired ? "stopped" : "connected");
+      expect(rejected).toHaveBeenCalledTimes(retired ? 1 : 0);
+      if (retired) {
+        localStorage.removeItem(key);
+        window.dispatchEvent(new Event("pagehide"));
+        expect(localStorage.getItem(key)).toBeNull();
+      }
+      if (!retired) {
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key,
+            oldValue: JSON.stringify(record(scope)),
+            newValue: null,
+          }),
+        );
+        expect(gateway.snapshot.phase).toBe("stopped");
+        expect(rejected).toHaveBeenCalledOnce();
+      }
     } finally {
       stop();
       gateway.stop();

@@ -28,7 +28,9 @@ After a successful sign-in, the browser can reopen its cached shell, sidebar,
 conversation, and drafts while the Gateway is unreachable. Token and device-token
 sign-ins retain their credential checks. Trusted-proxy, Tailscale, and password
 sign-ins also support warm reload when the Gateway supplies a stable recovery
-identity. One-time bootstrap credentials do not create offline admission.
+identity. A one-time bootstrap credential is never retained for offline admission;
+a successful pairing can use the reusable device grant already issued and stored
+by the browser client.
 
 The retained identity is for local display and storage, not permission to call
 the Gateway. Reading, drafting, and queuing input remain available offline;
@@ -57,6 +59,12 @@ Boot and roster records retain the existing 30-day expiry, and transcripts keep
 their bounded cache limits. Clearing site data removes local recovery data.
 If browser storage is unavailable or no usable record exists, the connection
 screen appears as usual.
+
+Approval, question, and focus documents do not read or publish the workspace’s
+warm state. An independent sign-in attempt cannot delete another tab’s valid
+admission merely because its credentials differ or its pairing link is rejected.
+Retirement remains scoped to the admitted owner; an actual account replacement,
+**Forget this browser**, or clearing site data still retires the affected admission.
 
 ### Upgrading existing browser data
 

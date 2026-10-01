@@ -75,10 +75,15 @@ describe("OpenClaw shell Control UI refresh", () => {
   });
 
   it("retires cached roster admission before publishing a replacement connection", () => {
+    store.current().opts.onHello?.({
+      type: "hello-ok",
+      protocol: 1,
+      auth: { role: "operator", scopes: [], recoveryScope: "admitted-account" },
+    });
     const generation = sessionRosterCacheGeneration;
     const observed: number[] = [];
     const unsubscribe = store.gateway.subscribe((snapshot) => {
-      if (snapshot.phase === "connecting") {
+      if (snapshot.phase === "reconnecting") {
         observed.push(sessionRosterCacheGeneration);
       }
     });

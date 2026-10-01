@@ -29,8 +29,6 @@ import { setAvatarGatewayOrigin } from "../lib/identity-avatar-context.ts";
 import { resolveSessionKey } from "../lib/sessions/index.ts";
 import { readSessionDefaults } from "../lib/sessions/session-key.ts";
 import { generateUUID } from "../lib/uuid.ts";
-import { clearBootRecords } from "./boot-record.ts";
-import { clearWarmBootState } from "./bootstrap-warm-boot.ts";
 import type {
   ApplicationGateway,
   ApplicationGatewayConnectOptions,
@@ -51,7 +49,7 @@ import {
 } from "./gateway-observers.ts";
 import { readSuspensionPhase } from "./gateway-readiness.ts";
 import { createAvailabilityIndicators } from "./gateway-store.availability.ts";
-import { prepareGatewayClientCredentials } from "./gateway-store.credentials.ts";
+import { createGatewayCredentials } from "./gateway-store.credentials.ts";
 import { createDeviceCredentialMethods } from "./gateway-store.device-credential.ts";
 import { createGatewaySelfProfile } from "./gateway-store.self-profile.ts";
 import { readHelloPluginCapabilities } from "./plugin-capabilities.ts";
@@ -75,6 +73,8 @@ export function createApplicationGateway(
   createClient: GatewayClientFactory = defaultClientFactory,
   options: {
     persistDefaultConnectionSettings?: boolean;
+    /** Shellless documents do not own the application’s shared warm admission. */
+    ownsWarmBoot?: boolean;
     resourceBasePath?: string;
     bootstrapProfile?: ControlUiBootstrapProfileHint;
     getModelCatalogTarget?: (gatewayUrl: string) => ModelCatalogTarget | undefined;
@@ -100,6 +100,7 @@ export function createApplicationGateway(
     password: initialPassword,
   };
   let connectionRevision = 0;
+  const credentials = createGatewayCredentials(options.ownsWarmBoot !== false);
   let snapshot: ApplicationGatewaySnapshot = {
     client: null,
     phase: "stopped",
@@ -333,10 +334,7 @@ export function createApplicationGateway(
     const retiredEventLog = credentialsChanged ? eventLog.resetConnection() : null;
     if (credentialsChanged) {
       connectionRevision += 1;
-      void clearWarmBootState(
-        gatewayCredentialScope(connection.gatewayUrl),
-        client?.offlineRecoveryScope ?? client?.recoveryScope,
-      );
+      credentials.retire(true);
     }
     // Only a gateway URL that differs from the current connection counts as an
     // explicit selection. The login gate always resubmits its prefilled URL, so
@@ -391,7 +389,7 @@ export function createApplicationGateway(
     client?.stop();
 
     const nextClient = createClient({
-      ...prepareGatewayClientCredentials(nextConnection, credentialsChanged, client),
+      ...credentials.prepare(nextConnection, credentialsChanged, client),
       clientName: options.clientOptions?.clientName ?? "openclaw-control-ui",
       clientVersion: CONTROL_UI_BUILD_INFO.version ?? "dev",
       clientBuildId: CONTROL_UI_BUILD_INFO.buildId,
@@ -412,6 +410,7 @@ export function createApplicationGateway(
         if (client !== nextClient) {
           return;
         }
+        credentials.acceptHello(hello.auth, nextConnection.token);
         // The submitted secret is unclassified until this Gateway reports its mode.
         // Clear an old token too when the origin now uses password or proxy auth.
         persistSessionToken(
@@ -527,7 +526,7 @@ export function createApplicationGateway(
         if (readConnectionAuthReason(error?.details) || error?.code === "PAIRING_REQUIRED") {
           nextClient.retireOfflineRecoveryScope?.();
           everConnected = false;
-          clearBootRecords(gatewayCredentialScope(nextConnection.gatewayUrl));
+          credentials.retire(false);
         }
         const mismatchedBuildId = readControlUiBuildMismatchId(error?.details);
         if (mismatchedBuildId) {
