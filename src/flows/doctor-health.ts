@@ -348,6 +348,9 @@ async function runDoctorHealthFlowWithResult(
         for (const change of backups.changes) {
           effectiveRuntime.log(change);
         }
+        for (const warning of backups.warnings) {
+          effectiveRuntime.log(warning);
+        }
       }
 
       const { repairDoctorAgentDeletionJournal } =
@@ -461,6 +464,25 @@ async function runDoctorHealthFlowWithResult(
           assertDoctorMaintenanceReady(ctx.cfg, process.env, effectiveRuntime.log),
         );
         if (!readiness.schemaPublicationDeferred) {
+          const { completeDoctorMigrationBackups } =
+            await import("../commands/doctor-migration-backup-artifacts.js");
+          try {
+            completeDoctorMigrationBackups(
+              process.env,
+              admissionSchemas.agentDatabaseMigrationDiscovery?.discovery.targets
+                .filter(
+                  (target) =>
+                    !readiness.refusedDatabasePaths.some(
+                      (refused) => refused === target.path || refused === target.realPath,
+                    ),
+                )
+                .map((target) => target.path) ?? [],
+            );
+          } catch (error) {
+            effectiveRuntime.log(
+              `Migration backups remain protected; completion registration failed: ${String(error)}`,
+            );
+          }
           resumeCapture?.();
           if (isTruthyEnvValue(process.env.OPENCLAW_DEBUG_PROXY_ENABLED)) {
             const { initializeDebugProxyCaptureAsync } =

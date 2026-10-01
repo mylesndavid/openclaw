@@ -100,8 +100,9 @@ export async function assertDoctorMaintenanceReady(
   cfg: OpenClawConfig,
   env: NodeJS.ProcessEnv,
   log: (message: string) => void,
-): Promise<{ schemaPublicationDeferred: boolean }> {
+): Promise<{ schemaPublicationDeferred: boolean; refusedDatabasePaths: string[] }> {
   let schemaPublicationDeferred = false;
+  let refusedDatabasePaths: string[] = [];
   const { assertSessionStoreMigrationComplete } =
     await import("../config/sessions/startup-migration.js");
   assertSessionStoreMigrationComplete({ cfg, env, operation: "doctor" });
@@ -115,6 +116,9 @@ export async function assertDoctorMaintenanceReady(
       schemaPublicationDeferred = true;
       log(publication.message);
     },
+    onVerified: (schemas) => {
+      refusedDatabasePaths = schemas.agentRefusals?.flatMap((refusal) => refusal.paths) ?? [];
+    },
     configuredAgentDatabaseTargets: resolveConfiguredAgentDatabaseTargets(cfg, { env }),
   });
   const { assertConfiguredWorkspaceStateReady } = await import("../agents/workspace-state-dirs.js");
@@ -122,7 +126,10 @@ export async function assertDoctorMaintenanceReady(
   const { assertNoPendingLegacyExecApprovals } =
     await import("../infra/exec-approvals-migration-gate.js");
   assertNoPendingLegacyExecApprovals({ operation: "doctor", env });
-  return { schemaPublicationDeferred };
+  return {
+    schemaPublicationDeferred,
+    refusedDatabasePaths,
+  };
 }
 
 /** Repair may have committed config before a later diagnostic failed. */

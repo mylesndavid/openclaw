@@ -23,7 +23,11 @@ import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import type { DB } from "../state/openclaw-state-db.generated.js";
 import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
 import { sha256Hex } from "./crypto-digest.js";
-import type { DeferredPluginMigration } from "./deferred-plugin-migrations.js";
+import {
+  readDeferredPluginMigrations,
+  withDeferredPluginMigrationsCurrent,
+  type DeferredPluginMigration,
+} from "./deferred-plugin-migrations.js";
 import {
   databaseIdentity,
   preservesRecordedIndexValue,
@@ -49,6 +53,7 @@ import type { TranscriptFileFingerprint } from "./session-sqlite-migration-reade
 import { recordStartupMigrationWarnings } from "./state-migrations.messages.js";
 import {
   readLegacyMigrationReceiptFromDatabase,
+  markLegacyMigrationSourceRemovedInDatabase,
   recordLegacyMigrationReceipt,
   resolveLegacyMigrationSourceKey,
   type LegacyMigrationReceipt,
@@ -420,13 +425,65 @@ function readSessionImportReceipt(
   params: Pick<SessionImportSource, "target" | "sqlitePath" | "env"> & { database?: DatabaseSync },
 ) {
   const target = { ...params.target, sqlitePath: params.sqlitePath };
-  const read = (db: DatabaseSync) =>
-    tableExists(db, "migration_sources")
+  const read = (db: DatabaseSync) => {
+    const receipt = tableExists(db, "migration_sources")
       ? readLegacyMigrationReceiptFromDatabase(db, sourceKey(target))
       : undefined;
+    return receipt?.removedSource ? undefined : receipt;
+  };
   return params.database
     ? read(params.database)
     : withExistingOpenClawStateDatabaseReadOnly(({ db }) => read(db), { env: params.env });
+}
+
+/** Archival, not plugin completion alone, ends the original index's no-replay obligation. */
+export function retireDeferredPluginSessionImport(
+  params: SessionImportSource & {
+    completedPluginIds?: readonly string[];
+    assertCurrent?: () => void;
+  },
+): boolean {
+  const receipt = readSessionImportReceipt(params);
+  if (!receipt) {
+    return false;
+  }
+  const recorded = receiptSchema.parse(JSON.parse(receipt.reportJson));
+  const expectedPending = readDeferredPluginMigrations({ env: params.env });
+  if (
+    expectedPending.some(
+      (pending) =>
+        recorded.pluginIds.includes(pending.pluginId) &&
+        !params.completedPluginIds?.includes(pending.pluginId),
+    )
+  ) {
+    return false;
+  }
+  if (
+    statMigrationPath(params.target.storePath) ||
+    recorded.sources.some((source) => statMigrationPath(source.path))
+  ) {
+    return false;
+  }
+  return runOpenClawStateWriteTransaction(
+    ({ db }) =>
+      withDeferredPluginMigrationsCurrent({ env: params.env, expectedPending }, () => {
+        params.assertCurrent?.();
+        if (!isDeepStrictEqual(readSessionImportReceipt({ ...params, database: db }), receipt)) {
+          throw new Error("Deferred session import receipt changed before retirement.");
+        }
+        if (
+          statMigrationPath(params.target.storePath) ||
+          recorded.sources.some((source) => statMigrationPath(source.path))
+        ) {
+          return false;
+        }
+        readDeferredPluginSessionImport({ ...params, database: db });
+        markLegacyMigrationSourceRemovedInDatabase(db, receipt.sourceKey);
+        return true;
+      }),
+    { env: params.env },
+    { operationLabel: "state.retire-plugin-session-source" },
+  );
 }
 
 function parseSessionImportReceipt(
@@ -725,6 +782,7 @@ export function recordDeferredPluginSessionImport(
         runId: key,
         reportJson: JSON.stringify(report),
         now: Date.now(),
+        upsert: readLegacyMigrationReceiptFromDatabase(db, key)?.removedSource === true,
       });
     },
     { env: params.env },

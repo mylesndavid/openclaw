@@ -16,6 +16,7 @@ import {
   prepareSessionSourceVerification,
   readDeferredPluginSessionImport,
   rebuildDeferredPluginSessionSourceIndex,
+  retireDeferredPluginSessionImport,
   resolveVerifiedSessionSource,
   type DeferredPluginSessionImport,
 } from "../infra/deferred-plugin-session-sources.js";
@@ -122,6 +123,9 @@ export async function prepareRetainedSessionImport(
   };
   if (!isSqliteStore) {
     try {
+      if (params.mode === "import" || params.mode === "recover") {
+        retireDeferredPluginSessionImport(sourceVerification);
+      }
       if (
         (params.mode === "import" || params.mode === "recover") &&
         (await rebuildDeferredPluginSessionSourceIndex(sourceVerification))
