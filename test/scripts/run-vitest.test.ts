@@ -328,7 +328,7 @@ describe("scripts/run-vitest", () => {
     // Observe termination and drain both pipes independently instead.
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
       (resolve, reject) => {
-        child.once("exit", (code, signal) => resolve({ code, signal }));
+        child.once("exit", (code, exitSignal) => resolve({ code, signal: exitSignal }));
         child.once("error", reject);
       },
     );

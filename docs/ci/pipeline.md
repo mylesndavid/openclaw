@@ -141,9 +141,12 @@ Bun's Vitest parent completes the canonical SQLite native-close admission before
 creating test threads. Each worker inherits that decision, allowing capable
 runtimes to reuse readers while negative probes retain conservative cleanup.
 
-Audited ordinary unit-fast tests with no hooks use Bun's native test runner,
-including qualified async callback tests. Tests that register a pending promise
-assertion before settling it retain Vitest: native Bun waits inside that matcher. The same runtime owner intersects their qualification data with the
+Audited ordinary unit-fast tests use Bun's native test runner, including
+qualified async callbacks and self-contained zero-argument setup hooks. Hooks
+that take a Vitest context retain Vitest: Bun interprets a hook parameter as a
+completion callback. Tests that register a pending promise
+assertion before settling it retain Vitest: native Bun waits inside that matcher.
+The same runtime owner intersects their qualification data with the
 canonical inventory and each existing stripe's include patterns. The remaining
 compatible files keep Vitest on Bun. Native admission checks test, setup, and
 fixture-helper bytes; changed or unreadable inputs return the affected tests to
