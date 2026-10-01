@@ -154,7 +154,9 @@ function persistChatComposerStateResult(
 
 function persistCapturedChatComposerStateResult(
   state: ChatComposerPersistenceState,
-  captured: { scope: StoredChatOutboxScope; awaitingDefaults: boolean; incognito?: boolean },
+  captured: Pick<ReturnType<typeof captureChatOutboxAdmission>, "scope" | "awaitingDefaults"> & {
+    incognito?: boolean;
+  },
   options: ChatComposerPersistOptions = {},
 ): ChatComposerPersistStatus {
   const storage = getSafeSessionStorage();
@@ -511,11 +513,7 @@ export class ChatComposerPersistence {
   private durableRestoreProtected = false;
   // A transient disconnect invalidates scope readiness, not the owner authenticated
   // by this client. Client or Gateway replacement still fences the cached owner.
-  private durableOwner: {
-    client: ChatComposerPersistenceState["client"];
-    gatewayOwner: string;
-    recoveryScope: string;
-  } | null = null;
+  private durableOwner: ReturnType<typeof captureChatComposerOwner> | null = null;
   private durableRetiredScopeKey = "";
   private forceDurableOwnerRestore = false;
   private readonly durablePersistence = new DurableChatComposerPersistence(

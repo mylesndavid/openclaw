@@ -1,5 +1,5 @@
-import type { ReactiveControllerHost } from "lit";
 /* @vitest-environment jsdom */
+import type { ReactiveControllerHost } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { GatewaySessionRow } from "../../api/types.ts";

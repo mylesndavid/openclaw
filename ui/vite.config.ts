@@ -13,6 +13,7 @@ import {
   type ResolveModulePreloadDependenciesFn,
   type UserConfig,
 } from "vite";
+import { mermaidClassicBundlePlugin } from "../packages/mermaid-renderer/vite-plugin.ts";
 import { CONTROL_UI_LOCALE_ENTRIES } from "../scripts/lib/control-ui-i18n-config.ts";
 import {
   CONTROL_UI_ASSET_MANIFEST_FILENAME,
@@ -690,6 +691,13 @@ export default function controlUiViteConfig(
   };
   return {
     base,
+    worker: {
+      format: "iife",
+      plugins: () => [mermaidClassicBundlePlugin()],
+      rolldownOptions: {
+        output: { codeSplitting: false },
+      },
+    },
     define: {
       "globalThis.OPENCLAW_CONTROL_UI_BUILD_INFO": JSON.stringify(buildInfo),
       "globalThis.OPENCLAW_UI_DEV_GATEWAY": devGateway
@@ -742,6 +750,7 @@ export default function controlUiViteConfig(
       ...(devGateway ? { proxy: devGateway.proxy } : {}),
     },
     plugins: [
+      mermaidClassicBundlePlugin(),
       controlUiIsolatedDesktopRuntimePlugin(),
       {
         name: "control-ui-static-import-preloads",

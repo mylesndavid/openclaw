@@ -53,7 +53,9 @@ roster data on connect, and chat resumes from its saved transcript cursor. The
 first chat request waits up to 300 ms for stored history before falling back to
 a live read. Agent switches and stale asynchronous reads retain their own
 identity checks. Agent pickers and the agent directory wait for a live roster;
-stored agent lists cannot establish the current role’s discovery permissions.
+stored agent lists cannot establish the current role’s discovery permissions. Short
+conversation links use cached routing defaults and session rows before agent
+discovery; the Gateway revalidates the established session after connecting.
 
 Boot and roster records retain the existing 30-day expiry, and transcripts keep
 their bounded cache limits. Clearing site data removes local recovery data.

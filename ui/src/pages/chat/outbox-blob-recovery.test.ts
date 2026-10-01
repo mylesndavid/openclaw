@@ -306,13 +306,13 @@ describe("Blob-preserving metadata migration", () => {
   );
 
   it.each(["noop-write", "failed-write", "noop-remove", "failed-remove"])(
-    "retains shared bytes after a destination commit and %s of the unscoped source",
+    "keeps recovery inert and retains shared bytes across %s of the unscoped source",
     async (failure) => {
       const host = hostFor();
       const foreign = hostFor("principal-b");
       const item = await prepare(host, "partial-transfer");
       const unrelated = await prepare(host, "destination-only", host.sessionKey);
-      const source = seed([item], "global", 4);
+      seed([item], "global", 4);
       if (failure.endsWith("write")) {
         // A retained row makes source retirement write instead of remove the bucket.
         const store = readStoredOutboxStore(sessionStorage, target);
@@ -322,7 +322,6 @@ describe("Blob-preserving metadata migration", () => {
         };
         writeStoredOutboxStore(sessionStorage, target, store);
       }
-      const sourceBefore = sessionStorage.getItem(source.key);
       const entry = expectDefined(
         readChatOutboxRecovery(host).entries.find(
           (candidate) => candidate.session.queue?.[0]?.id === item.id,
@@ -340,7 +339,12 @@ describe("Blob-preserving metadata migration", () => {
         }
       };
       const write = vi.spyOn(sessionStorage, "setItem").mockImplementation((key, value) => {
-        if (key === target.key && failure.endsWith("write")) {
+        const pending = JSON.parse(value) as { recovery: Record<string, unknown> };
+        if (
+          key === target.key &&
+          failure.endsWith("write") &&
+          !Object.keys(pending.recovery).length
+        ) {
           fail();
           return;
         }
@@ -370,12 +374,17 @@ describe("Blob-preserving metadata migration", () => {
       };
 
       expect(restoreChatOutboxRecovery(host, entry, capture())).toBe("storage-failed");
-      expect(sessionStorage.getItem(source.key)).toBe(sourceBefore);
+      expect(
+        readChatOutboxRecovery(host).entries.find((row) => row.session.queue?.[0]?.id === item.id)
+          ?.session,
+      ).toEqual(entry.session);
       const committed = readStoredOutboxStore(sessionStorage, ownedTarget);
-      expect(committed.sessions[destinationKey]?.queue?.[0]?.attachmentPayload).toEqual(
-        item.attachmentPayload,
+      expect(committed.sessions[destinationKey]).toBeUndefined();
+      expect(Object.values(committed.recovery).flatMap((row) => row.session.queue ?? [])).toEqual(
+        entry.session.queue,
       );
-      committed.sessions[destinationKey]!.queue!.push(unrelated);
+      // Unrelated retirement must not collect bytes owned by either inert staging copy.
+      committed.sessions[destinationKey] = { updatedAt: 10, queue: [unrelated] };
       writeStoredOutboxStore(sessionStorage, ownedTarget, committed);
       clearDestination();
       await settleCleanup();
@@ -403,7 +412,13 @@ describe("Blob-preserving metadata migration", () => {
       await settleCleanup();
       await expectBytes(host, item);
       expect(cleanup).toHaveBeenCalledTimes(1);
-      expect(sessionStorage.getItem(source.key)).toBe(sourceBefore);
+      expect(
+        readChatOutboxRecovery(host).entries.find((row) => row.session.queue?.[0]?.id === item.id)
+          ?.session,
+      ).toEqual(entry.session);
+      expect(
+        readStoredOutboxStore(sessionStorage, ownedTarget).sessions[destinationKey],
+      ).toBeUndefined();
       write.mockRestore();
       removal.mockRestore();
 

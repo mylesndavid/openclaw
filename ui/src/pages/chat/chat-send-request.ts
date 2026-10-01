@@ -1,3 +1,4 @@
+import { DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS } from "@openclaw/gateway-client/browser";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { ChatWorkContext } from "../../../../packages/gateway-protocol/src/chat-work-context.js";
 import type {
@@ -35,7 +36,6 @@ export async function requestChatSend(
     replyToId?: string;
     expectedLeafEntryId?: string | null;
   },
-  options?: { timeoutMs: number },
 ): Promise<ChatSendAck> {
   if (params.attachments?.length) {
     assertUploadsEnabled(state.uploadConfig);
@@ -81,8 +81,8 @@ export async function requestChatSend(
       idempotencyKey: params.runId,
       attachments: buildChatApiAttachments(params.attachments),
     },
-    // Detached commands have no durable uncertainty owner; only outbox-owned sends opt in.
-    { timeoutMs: options?.timeoutMs ?? null },
+    // This bounds receipt of the admission ACK, not execution of the admitted turn.
+    { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
   );
   if (controlUiReconnectResume) {
     state.reconnectResumeSessionId = null;

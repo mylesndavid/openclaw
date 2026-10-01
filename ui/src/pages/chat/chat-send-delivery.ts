@@ -1,4 +1,3 @@
-import { DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS } from "@openclaw/gateway-client/browser";
 import { readAgentRuntimeRestrictionErrorDetails } from "../../../../packages/gateway-protocol/src/index.js";
 import { isNonTerminalAgentRunStatus } from "../../../../src/shared/agent-run-status.js";
 import { GatewayRequestError } from "../../api/gateway.ts";
@@ -299,26 +298,22 @@ async function sendPreparedChatMessage(
     const deliveryLeafEntryId = prepared.intent
       ? prepared.expectedLeafEntryId
       : expectedLeafEntryId;
-    const ack = await requestChatSend(
-      host,
-      {
-        message,
-        workContext: prepared.workContext,
-        mentions: submitted.mentions,
-        attachments: attachments.length ? attachments : undefined,
-        runId,
-        sessionKey,
-        agentId: prepared.agentId,
-        ...(prepared.sessionId ? { sessionId: prepared.sessionId } : {}),
-        ...(prepared.intent ? { intent: prepared.intent, sessionId: prepared.sessionId } : {}),
-        ...(prepared.queueMode ? { queueMode: prepared.queueMode } : {}),
-        ...(prepared.queueMode !== "steer" && deliveryLeafEntryId !== undefined
-          ? { expectedLeafEntryId: deliveryLeafEntryId }
-          : {}),
-        ...(prepared.replyToId ? { replyToId: prepared.replyToId } : {}),
-      },
-      { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
-    );
+    const ack = await requestChatSend(host, {
+      message,
+      workContext: prepared.workContext,
+      mentions: submitted.mentions,
+      attachments: attachments.length ? attachments : undefined,
+      runId,
+      sessionKey,
+      agentId: prepared.agentId,
+      ...(prepared.sessionId ? { sessionId: prepared.sessionId } : {}),
+      ...(prepared.intent ? { intent: prepared.intent, sessionId: prepared.sessionId } : {}),
+      ...(prepared.queueMode ? { queueMode: prepared.queueMode } : {}),
+      ...(prepared.queueMode !== "steer" && deliveryLeafEntryId !== undefined
+        ? { expectedLeafEntryId: deliveryLeafEntryId }
+        : {}),
+      ...(prepared.replyToId ? { replyToId: prepared.replyToId } : {}),
+    });
     if (!requestConnectionIsCurrent()) {
       return "pending";
     }

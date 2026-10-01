@@ -224,10 +224,7 @@ export function resolvePendingComposerSessions(
       const existingIds = new Set(destination.queue?.map((item) => item.id));
       const conflict = session.queue?.some((item) => existingIds.has(item.id));
       const sourceNewer = (session.draftRevision ?? 0) > (destination.draftRevision ?? 0);
-      if (
-        conflict ||
-        ((session.draft || session.goalMode || session.replyTarget) && !sourceNewer)
-      ) {
+      if (conflict || (hasStoredComposerDraftInput(session) && !sourceNewer)) {
         holdComposerRecovery(store, `pending:${key}`, 4, key, session);
       } else {
         const draftOwner = sourceNewer ? session : destination;
@@ -293,12 +290,7 @@ function holdComposerRecovery(
 ): void {
   const { queue, ...draft } = session;
   const groups = new Map<string | undefined, ChatQueueItem[]>();
-  if (
-    draft.draft ||
-    draft.goalMode ||
-    draft.replyTarget ||
-    (!queue?.length && draft.draftRevision !== undefined)
-  ) {
+  if (hasStoredComposerDraftInput(draft) || (!queue?.length && draft.draftRevision !== undefined)) {
     groups.set(undefined, []);
   }
   for (const item of queue ?? []) {
@@ -493,9 +485,7 @@ export function readStoredOutboxStore(
         }
       }
       if (
-        session.draft ||
-        session.goalMode ||
-        session.replyTarget ||
+        hasStoredComposerDraftInput(session) ||
         session.draftRevision !== undefined ||
         session.queue?.length
       ) {
@@ -567,6 +557,7 @@ export function writeStoredOutboxStore(
   storage: Storage,
   target: ComposerStorageTarget,
   store: StoredComposerState,
+  options: { requiredSessionKey?: string; beforeCommit?: () => void } = {},
 ): void {
   if (target.unavailable) {
     throw new Error("Offline account recovery is unavailable");
@@ -601,9 +592,7 @@ export function writeStoredOutboxStore(
       .filter(
         ([sessionKey, session]) =>
           sessionKey !== unresolvedGlobalKey &&
-          !session.draft &&
-          !session.goalMode &&
-          !session.replyTarget &&
+          !hasStoredComposerDraftInput(session) &&
           session.draftRevision !== undefined,
       )
       .toSorted(byNewest),
@@ -614,19 +603,35 @@ export function writeStoredOutboxStore(
       ...drafts
         .filter(
           ([sessionKey, session]) =>
-            sessionKey !== unresolvedGlobalKey &&
-            Boolean(session.draft || session.goalMode || session.replyTarget),
+            sessionKey !== unresolvedGlobalKey && hasStoredComposerDraftInput(session),
         )
         .toSorted(byNewest),
     ].slice(0, MAX_STORED_SESSIONS),
     ...protectedDrafts,
   ];
+  // A recovery move consumes its remaining source. Unlike an ordinary bounded
+  // cache write, it must retain both that destination and every existing input.
+  if (options.requiredSessionKey !== undefined) {
+    const required = new Set([
+      options.requiredSessionKey,
+      ...entries
+        .filter(([, session]) => session.queue?.length || hasStoredComposerDraftInput(session))
+        .map(([key]) => key),
+    ]);
+    for (const [key] of retained) {
+      required.delete(key);
+    }
+    if (required.size > 0) {
+      throw new Error("Required chat outbox destination exceeds retention; source retained");
+    }
+  }
   if (
     retained.length === 0 &&
     Object.keys(store.recovery).length === 0 &&
     !pendingLegacyTransfers.has(store) &&
     !store.legacyReceipts
   ) {
+    options.beforeCommit?.();
     storage.removeItem(target.key);
     if (storage.getItem(target.key) !== null) {
       throw new Error("Chat outbox removal verification failed");
@@ -646,6 +651,7 @@ export function writeStoredOutboxStore(
   };
   const payload = JSON.stringify(retainedStore);
   // Verification precedes deleting any legacy source, including quota/no-op writes.
+  options.beforeCommit?.();
   storage.setItem(target.key, payload);
   if (storage.getItem(target.key) !== payload) {
     throw new Error("Chat outbox write verification failed");

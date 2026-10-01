@@ -475,7 +475,7 @@ it.each(
         expect(host.request).toHaveBeenCalledWith(
           "chat.send",
           expect.objectContaining({ sessionKey: host.sessionKey, message }),
-          { timeoutMs: null },
+          { timeoutMs: 30_000 },
         );
         expect(
           host.request.mock.calls.filter(([method]) => method === "chat.history"),
