@@ -202,21 +202,35 @@ async function main() {
       process.env.OPENCLAW_DOCKER_E2E_SELECTED_SHA,
       "Candidate build commit must equal the selected source SHA",
     );
-    const baseline = readJson(path.join(artifacts, "baseline-package-identity.json"));
+    // Generic survivor flows do not capture the worker-only published baseline.
+    const installedBaselineCommit =
+      process.env.OPENCLAW_UPGRADE_SURVIVOR_SCENARIO === "cron-owner-doctor"
+        ? readJson(path.join(artifacts, "baseline-package-identity.json")).buildInfo.commit
+        : baselineCommit;
     assert.notEqual(
       expected.buildInfo.commit,
-      baseline.buildInfo.commit,
+      installedBaselineCommit,
       "Candidate still contains published bytes",
     );
     writeJson(path.join(artifacts, "candidate-package-identity.json"), expected);
   } else if (mode === "installed") {
     const expected = readJson(path.join(artifacts, "candidate-package-identity.json"));
-    assert.equal(
-      hash(fs.readFileSync(candidateTarball)),
-      expected.sha256,
-      "Candidate tarball changed",
-    );
-    const actual = readWorkerCellPackageIdentity(packageRoot);
+    let tarballBytes;
+    try {
+      tarballBytes = fs.readFileSync(candidateTarball);
+    } catch (cause) {
+      throw new Error("Candidate tarball changed: cannot read the frozen tarball", { cause });
+    }
+    assert.equal(hash(tarballBytes), expected.sha256, "Candidate tarball changed");
+    let actual;
+    try {
+      actual = readWorkerCellPackageIdentity(packageRoot);
+    } catch (cause) {
+      throw new Error(
+        "Installed application payload differs from the frozen tarball: cannot read the installed package",
+        { cause },
+      );
+    }
     assertWorkerCellPackageIdentity(actual, {
       version: expected.version,
       buildInfo: expected.buildInfo,

@@ -8,7 +8,13 @@ import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const selectedSha = "a".repeat(40);
 const version = "2026.9.6";
-type Change = "valid" | "stale" | "tarball-changed" | "wrong-source";
+type Change =
+  | "valid"
+  | "stale"
+  | "tarball-changed"
+  | "tarball-missing"
+  | "entrypoint-missing"
+  | "wrong-source";
 
 function runCandidateFlow(scenario: "base" | "sqlite-volume", change: Change) {
   const root = tempDirs.make("upgrade-survivor-candidate-identity-");
@@ -78,6 +84,12 @@ update_candidate_for_install_mode() {
   fi
   if [ "$UNIT_CHANGE" = tarball-changed ]; then
     printf '\\n' >> "$CANDIDATE_SPEC"
+  fi
+  if [ "$UNIT_CHANGE" = tarball-missing ]; then
+    rm "$CANDIDATE_SPEC"
+  fi
+  if [ "$UNIT_CHANGE" = entrypoint-missing ]; then
+    rm "$UNIT_ROOT/installed/openclaw.mjs"
   fi
 }
 phase() {
@@ -149,6 +161,12 @@ describe.skipIf(process.platform === "win32")(
         events: [],
       },
       { change: "tarball-changed", error: "Candidate tarball changed", events: ["updater"] },
+      { change: "tarball-missing", error: "Candidate tarball changed", events: ["updater"] },
+      {
+        change: "entrypoint-missing",
+        error: "Installed application payload differs from the frozen tarball",
+        events: ["updater"],
+      },
     ] as const)("refuses $change at the actual candidate boundary", ({ change, error, events }) => {
       const observed = runCandidateFlow("base", change);
       expect(observed.result.status).not.toBe(0);
