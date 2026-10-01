@@ -36,6 +36,7 @@ import {
   rememberSqliteTestAgentOwner,
   retainSqliteTestCustody,
   retireSqliteTestSingleton,
+  settleSqliteTestAgentCloses,
   sqliteTestSingletonPublications,
 } from "./sqlite-test-lifecycle.ts";
 
@@ -76,6 +77,7 @@ const SESSION_SUSPENSION_TEST_API = Symbol.for("openclaw.sessionSuspensionTestAp
 const SECRET_REDACTION_TEST_API = Symbol.for("openclaw.secretRedactionRegistryTestApi");
 const SESSION_MCP_RUNTIME_MANAGER = Symbol.for("openclaw.sessionMcpRuntimeManager");
 const RETAINED_MCP_MANAGERS = Symbol.for("openclaw.nonIsolatedRetainedMcpManagers");
+const SUBAGENT_REGISTRY_TEST_API = Symbol.for("openclaw.subagentRegistryTestApi");
 // Shared-worker scoped: the registry lives on the worker global, not in the module graph.
 const CUSTOM_ELEMENT_TRACKING = Symbol.for("openclaw.nonIsolatedCustomElementTracking");
 const nativeConsoleMethods = {
@@ -479,6 +481,8 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
   override async onBeforeRunTask(test: RunnerTask) {
     restoreRealTimers();
     restoreNativeTimerGlobals();
+    // aroundEach setup and its fixtures run before the first attempt's try hook.
+    await settleSqliteTestAgentCloses();
     await super.onBeforeRunTask(test);
     this.rememberSqliteAgentOwner();
   }
@@ -498,9 +502,15 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
     );
   }
 
-  override onBeforeTryTask(test: RunnerTask, options: TestTryOptions) {
+  // Teardown may only schedule agent database closes (the synchronous test closer does).
+  // Wait for that Worker retirement before each test (onBeforeRunTask) and retry attempt
+  // so a lease release never overlaps later work. Like the file drain, this waits
+  // without a deadline; the no-output watchdog owns real hangs.
+  // oxlint-disable-next-line typescript/no-misused-promises -- Vitest awaits this hook; its concrete TestRunner declaration narrows the return to void.
+  override async onBeforeTryTask(test: RunnerTask, options: TestTryOptions) {
     restoreRealTimers();
     restoreNativeTimerGlobals();
+    await settleSqliteTestAgentCloses();
     super.onBeforeTryTask(test, options);
   }
 
@@ -535,8 +545,10 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
     const clean = (phase: string, run: () => void) => {
       try {
         run();
+        return true;
       } catch (error) {
         recordFailure(phase, error);
+        return false;
       }
     };
     const drain = async (phase: string, run: () => Promise<void>) => {
@@ -548,17 +560,40 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
         return false;
       }
     };
+    const publishFailures = () =>
+      this.onTaskUpdate?.(
+        [...failed].map((file) => [file.id, file.result, file.meta]),
+        [],
+      );
     clean("Vitest file completion", () => super.onAfterRunFiles(files));
     await drain("mock resolution", () => drainMockerResolveMocks(internals.moduleRunner?.mocker));
-    clean("mock restoration", () => vi.restoreAllMocks());
-    clean("real timers", restoreRealTimers);
-    clean("native timers", restoreNativeTimerGlobals);
+    // The last test's scheduled closes must finish before cleanup restores shared state.
+    await settleSqliteTestAgentCloses();
+    // Restore independent file state even when failed cancellation retains the runtime owners.
+    const testHome = getSharedTestHome();
+    for (const [phase, run] of [
+      ["mock restoration", () => vi.restoreAllMocks()],
+      ["real timers", restoreRealTimers],
+      ["native timers", restoreNativeTimerGlobals],
+      ["console routing", restoreConsoleRoutingState],
+      ["global stubs", () => vi.unstubAllGlobals()],
+      ["environment stubs", () => vi.unstubAllEnvs()],
+      ["test home", () => restoreSharedTestHomeAfterEnvUnstub(testHome)],
+      ["mock history", () => vi.clearAllMocks()],
+    ] as const) {
+      clean(phase, run);
+    }
     clean("Gateway drain admission", () => {
       if (isGatewayWorkAdmissionClosed()) {
         markGatewayRestartDraining();
       }
     });
-    clean("run state", resetOpenClawGlobalRunState);
+    if (!clean("run state", resetOpenClawGlobalRunState)) {
+      // Failed cancellation retains the run's runtime, storage and module generation.
+      retainSqliteTestCustody();
+      await publishFailures();
+      return;
+    }
     if (
       !this.config.isolate &&
       !(await drain("MCP runtime custody", retireSessionMcpRuntimeManager))
@@ -566,21 +601,22 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
       retainSqliteTestCustody();
     }
 
-    // Mirror the missing cleanup from Vitest isolate mode so shared workers do
-    // not carry file-scoped timers, stubs, spies, or stale module state
-    // forward into the next file.
-    const testHome = getSharedTestHome();
     for (const [phase, run] of [
-      ["console routing", restoreConsoleRoutingState],
-      ["global stubs", () => vi.unstubAllGlobals()],
-      ["environment stubs", () => vi.unstubAllEnvs()],
-      ["test home", () => restoreSharedTestHomeAfterEnvUnstub(testHome)],
-      ["mock history", () => vi.clearAllMocks()],
       ["agent events", resetAgentEventsForTest],
       ["diagnostic state", resetOpenClawGlobalDiagnosticState],
       ["session suspension", resetOpenClawSessionSuspensionState],
     ] as const) {
       clean(phase, run);
+    }
+    if (
+      !(await drain("subagent registry", async () => {
+        const api = (globalThis as Record<PropertyKey, unknown>)[SUBAGENT_REGISTRY_TEST_API] as
+          | { resetSubagentRegistryForTests(options: { persist: false }): void | Promise<void> }
+          | undefined;
+        await api?.resetSubagentRegistryForTests({ persist: false });
+      }))
+    ) {
+      retainSqliteTestCustody();
     }
     if (!hasRetainedSqliteTestCustody()) {
       const drained = await drain("agent database custody", async () => {
@@ -627,10 +663,7 @@ export default class OpenClawNonIsolatedRunner extends TestRunner {
       }
     }
     if (failed.size) {
-      await this.onTaskUpdate?.(
-        [...failed].map((file) => [file.id, file.result, file.meta]),
-        [],
-      );
+      await publishFailures();
     }
   }
 }

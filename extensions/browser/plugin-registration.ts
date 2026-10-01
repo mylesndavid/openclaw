@@ -12,7 +12,6 @@ import type {
   OpenClawPluginSecurityAuditCollector,
   OpenClawPluginService,
   OpenClawPluginToolContext,
-  OpenClawPluginToolFactory,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { createSubsystemLogger, isTruthyEnvValue } from "openclaw/plugin-sdk/runtime-env";
 import { registerBrowserCliMetadata } from "./cli-metadata.js";
@@ -28,6 +27,7 @@ import {
 } from "./src/browser-node-commands.js";
 import { getOptionalBrowserStateRuntime } from "./src/browser-runtime-state.js";
 import { createBrowserToolDefinition } from "./src/browser-tool-description.js";
+import { getGatewayExtensionRelayModule } from "./src/browser/extension-relay.runtime.js";
 import {
   initializeBrowserSessionTabStore,
   drainBrowserSessionTabStore,
@@ -61,7 +61,7 @@ const loadBrowserUploadCleanupRuntimeModule = createLazyRuntimeSurface(
 function deriveChatTypeFromSessionKey(
   sessionKey: string | undefined,
 ): "direct" | "group" | "channel" | undefined {
-  const tokens = new Set(sessionKey?.toLowerCase().split(":").filter(Boolean) ?? []);
+  const tokens = new Set(sessionKey?.toLowerCase().split(":") ?? []);
   if (tokens.has("group")) {
     return "group";
   }
@@ -303,10 +303,13 @@ export function registerBrowserPlugin(api: OpenClawPluginApi) {
       maxEntries: 1,
     }),
   );
-  api.registerTool(((ctx: OpenClawPluginToolContext) => {
-    const config = ctx.getRuntimeConfig?.() ?? ctx.runtimeConfig ?? ctx.config;
-    return createLazyBrowserTool(createBrowserToolOptions(ctx), config);
-  }) as OpenClawPluginToolFactory);
+  api.registerTool(
+    (ctx: OpenClawPluginToolContext) => {
+      const config = ctx.getRuntimeConfig?.() ?? ctx.runtimeConfig ?? ctx.config;
+      return createLazyBrowserTool(createBrowserToolOptions(ctx), config);
+    },
+    { name: "browser" },
+  );
   registerBrowserCliMetadata(api);
   api.registerGatewayMethod(
     BROWSER_REQUEST_GATEWAY_METHOD,
@@ -345,8 +348,7 @@ export function registerBrowserPlugin(api: OpenClawPluginApi) {
     handleUpgrade: async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
       // Direct relay activity prepares the teardown module consumed by lazy service shutdown.
       await loadBrowserRegistrationRuntimeModule();
-      const { handleGatewayExtensionUpgrade } =
-        await import("./src/browser/extension-relay/gateway-relay-route.js");
+      const { handleGatewayExtensionUpgrade } = await getGatewayExtensionRelayModule();
       return await handleGatewayExtensionUpgrade(req, socket, head);
     },
   });

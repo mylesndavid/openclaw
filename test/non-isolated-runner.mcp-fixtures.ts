@@ -5,13 +5,18 @@ export function mcpManagerFixtureFiles(repoRoot: string): Record<string, string>
   const imports = `import { expect, it, vi } from "vitest";
 const key = Symbol.for("openclaw.sessionMcpRuntimeManager");
 const probeKey = Symbol.for("fixture.sessionMcpManager");
+async function fixtureManager() {
+  const { bindSessionMcpRuntimeTestScheduler } = await import(${source("agents/agent-bundle-mcp-manager.test-support.ts")});
+  await bindSessionMcpRuntimeTestScheduler();
+  const { getSessionMcpRuntimeManagerForTesting } = await import(${source("agents/agent-bundle-mcp-manager-api.ts")});
+  return getSessionMcpRuntimeManagerForTesting();
+}
 `;
   return {
     "09-mcp-a-mocked-owner.test.ts": `${imports}
 vi.mock(${source("plugins/plugin-metadata-snapshot.ts")}, () => ({}));
 it("retains a real MCP manager created under a file-owned metadata mock", async () => {
-  const { getSessionMcpRuntimeManagerForTesting } = await import(${source("agents/agent-bundle-mcp-manager-api.ts")});
-  const manager = getSessionMcpRuntimeManagerForTesting();
+  const manager = await fixtureManager();
   await manager.disposeAll();
   expect(globalThis[key]).toBe(manager);
 });
@@ -20,14 +25,13 @@ it("retains a real MCP manager created under a file-owned metadata mock", async 
 `,
     "09-mcp-c-replaced-owner.test.ts": `${imports}
 it("cancels the agent before publishing a successor during MCP disposal", async () => {
-  const { getSessionMcpRuntimeManagerForTesting } = await import(${source("agents/agent-bundle-mcp-manager-api.ts")});
-  const manager = getSessionMcpRuntimeManagerForTesting();
+  const manager = await fixtureManager();
   const lease = await manager.acquire({ sessionId: "replacement", workspaceDir: process.cwd(), cfg: { plugins: { enabled: false }, mcp: { servers: { probe: { command: process.execPath } } } } });
   lease.releaseLease();
   const join = lease.runtime.joinCleanup.bind(lease.runtime);
   await vi.resetModules();
-  const { createSessionMcpRuntimeManager } = await import(${source("agents/agent-bundle-mcp-manager.ts")});
-  const successor = createSessionMcpRuntimeManager({ enableIdleSweepTimer: false });
+  const { createSessionMcpRuntimeManager } = await import(${source("agents/agent-bundle-mcp-manager.test-support.ts")});
+  const successor = createSessionMcpRuntimeManager();
   const probe = globalThis[probeKey] = { successor, joined: false, cancelled: false };
   let cancel;
   const cancelled = new Promise(resolve => { cancel = resolve; });
@@ -57,8 +61,7 @@ it("keeps the replacement MCP manager usable after prior-owner cleanup", async (
 `,
     "09-mcp-e-mocked-disposer.test.ts": `${imports}
 it("leaves a retained MCP session behind a file-owned disposal spy", async () => {
-  const { getSessionMcpRuntimeManagerForTesting } = await import(${source("agents/agent-bundle-mcp-manager-api.ts")});
-  const manager = getSessionMcpRuntimeManagerForTesting();
+  const manager = await fixtureManager();
   const lease = await manager.acquire({ sessionId: "mocked-dispose", workspaceDir: process.cwd(), cfg: { plugins: { enabled: false }, mcp: { servers: { probe: { command: process.execPath } } } } });
   lease.releaseLease();
   globalThis[probeKey] = { manager };
@@ -73,10 +76,54 @@ it("restores the MCP disposal spy and closes its real owner", () => {
   delete globalThis[probeKey];
 });
 `,
+    "97-mcp-a-cancel-failure.test.ts": `${imports}
+import path from "node:path";
+it("keeps run-owned resources when cancellation fails", async () => {
+  const runState = await import(${source("agents/embedded-agent-runner/run-state.ts")});
+  const { openOpenClawStateDatabase } = await import(${source("state/openclaw-state-db.ts")});
+  const manager = await fixtureManager();
+  const lease = await manager.acquire({ sessionId: "cancel-failure", workspaceDir: process.cwd(), cfg: { plugins: { enabled: false }, mcp: { servers: { probe: { command: process.execPath } } } } });
+  lease.releaseLease();
+  const database = openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: path.join(import.meta.dirname, "cancel-state") } });
+  const handle = { cancel() { throw new Error("Synthetic run cancellation failed"); } };
+  const baseline = {
+    env: process.env.OPENCLAW_MCP_CANCEL_FIXTURE,
+    global: globalThis.__openclawMcpCancelFixture,
+    hasGlobal: Object.hasOwn(globalThis, "__openclawMcpCancelFixture"),
+  };
+  const probe = globalThis[probeKey] = { manager, runState, database, handle, baseline, closes: 0 };
+  vi.stubEnv("OPENCLAW_MCP_CANCEL_FIXTURE", "file-owned");
+  vi.stubGlobal("__openclawMcpCancelFixture", "file-owned");
+  const join = lease.runtime.joinCleanup.bind(lease.runtime);
+  lease.runtime.joinCleanup = async () => { probe.closes++; await join(); };
+  runState.ACTIVE_EMBEDDED_RUNS.set("cancel-failure", handle);
+});
+`,
+    "97-mcp-b-cancel-custody.test.ts": `${imports}
+it("preserves active runs and their module, MCP and database owners after failed cancellation", async () => {
+  const probe = globalThis[probeKey];
+  const runState = await import(${source("agents/embedded-agent-runner/run-state.ts")});
+  try {
+    expect(process.env.OPENCLAW_MCP_CANCEL_FIXTURE, "file environment must be restored after failed cancellation").toBe(probe.baseline.env);
+    expect(globalThis.__openclawMcpCancelFixture, "file global must be restored after failed cancellation").toBe(probe.baseline.global);
+    expect(Object.hasOwn(globalThis, "__openclawMcpCancelFixture")).toBe(probe.baseline.hasGlobal);
+    expect(probe.closes, "MCP disposal must not follow failed run cancellation").toBe(0);
+    expect(globalThis[key]).toBe(probe.manager);
+    expect(probe.database.db.isOpen).toBe(true);
+    expect(runState).toBe(probe.runState);
+    expect(runState.ACTIVE_EMBEDDED_RUNS.get("cancel-failure")).toBe(probe.handle);
+  } finally {
+    probe.runState.ACTIVE_EMBEDDED_RUNS.delete("cancel-failure");
+    await probe.manager.disposeAll();
+    const { closeOpenClawStateDatabaseAsync } = await import(${source("state/openclaw-state-db.ts")});
+    await closeOpenClawStateDatabaseAsync();
+    delete globalThis[probeKey];
+  }
+});
+`,
     "98-mcp-a-direct-disposer.test.ts": `${imports}
 it("replaces a retained MCP manager disposer without a restorable spy", async () => {
-  const { getSessionMcpRuntimeManagerForTesting } = await import(${source("agents/agent-bundle-mcp-manager-api.ts")});
-  const manager = getSessionMcpRuntimeManagerForTesting();
+  const manager = await fixtureManager();
   const lease = await manager.acquire({ sessionId: "mocked-dispose", workspaceDir: process.cwd(), cfg: { plugins: { enabled: false }, mcp: { servers: { probe: { command: process.execPath } } } } });
   lease.releaseLease();
   globalThis[probeKey] = { manager, dispose: manager.disposeAll.bind(manager) };
@@ -96,9 +143,8 @@ it("retains MCP custody when the file mocked its disposer", async () => {
 `,
     "98-mcp-c-prior-failure.test.ts": `${imports}
 it("fails MCP cleanup before the runner opens its cleanup scope", async () => {
-  const { getSessionMcpRuntimeManagerForTesting } = await import(${source("agents/agent-bundle-mcp-manager-api.ts")});
   const { createAgentCleanupScope } = await import(${source("agents/run-cleanup-timeout.ts")});
-  const manager = getSessionMcpRuntimeManagerForTesting();
+  const manager = await fixtureManager();
   const lease = await manager.acquire({ sessionId: "prior-failure", workspaceDir: process.cwd(), cfg: { plugins: { enabled: false }, mcp: { servers: { probe: { command: process.execPath } } } } });
   lease.releaseLease();
   const probe = globalThis[probeKey] = { manager, closes: 0 };
@@ -124,8 +170,7 @@ it("retains MCP custody after an earlier disposal failure without retrying it", 
 `,
     "99-mcp-a-uncertain-owner.test.ts": `${imports}
 it("records old-module MCP cleanup uncertainty during file retirement", async () => {
-  const { getSessionMcpRuntimeManagerForTesting } = await import(${source("agents/agent-bundle-mcp-manager-api.ts")});
-  const manager = getSessionMcpRuntimeManagerForTesting();
+  const manager = await fixtureManager();
   const lease = await manager.acquire({ sessionId: "uncertain", workspaceDir: process.cwd(), cfg: { plugins: { enabled: false }, mcp: { servers: { probe: { command: process.execPath } } } } });
   lease.releaseLease();
   const probe = globalThis[probeKey] = { manager, closes: 0 };

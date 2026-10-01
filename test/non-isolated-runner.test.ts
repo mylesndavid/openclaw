@@ -251,7 +251,7 @@ it("retires gateway admission before the next file", async () => {
   expect(getActiveGatewayRootWorkCount()).toBe(0);
   expect(isGatewayRestartDraining()).toBe(false);
   if (!prior?.continuation) throw new Error("expected prior gateway continuation");
-  await expect(prior.pending).rejects.toThrow("Gateway is draining");
+  await expect(prior.pending).rejects.toMatchObject({ name: "GatewayDrainingError" });
   await expect(prior.continuation.run(async () => true)).rejects.toThrow("no longer active");
   const admission = tryBeginGatewayRootWorkAdmission();
   expect(admission).not.toBeNull();
@@ -465,7 +465,7 @@ async function assertCompletion(
     pid: expected.pid,
     root: expected.root,
     processTimedOut: false,
-    ended: { reason: "failed", unhandledErrors: 0, failedModules: 4, suiteErrors: 4 },
+    ended: { reason: "failed", unhandledErrors: 0, failedModules: 5, suiteErrors: 5 },
   });
   const project = {
     name: "non-isolated-runner",
@@ -483,8 +483,8 @@ async function assertCompletion(
   const report: JsonTestResults = JSON.parse(await fs.readFile(expected.reportPath, "utf8"));
   expect(report.testResults.map((file) => file.name).toSorted()).toEqual(expected.files);
   expect(report).toMatchObject({
-    numTotalTests: 64,
-    numPassedTests: 63,
+    numTotalTests: 66,
+    numPassedTests: 65,
     numPendingTests: 1,
     numFailedTests: 0,
     numTodoTests: 0,
@@ -495,13 +495,14 @@ async function assertCompletion(
     const uncertainMcp =
       name === "99-mcp-a-uncertain-owner.test.ts" || name === "98-mcp-c-prior-failure.test.ts";
     const mockedMcpDisposer = name === "98-mcp-a-direct-disposer.test.ts";
+    const failedRunCancellation = name === "97-mcp-a-cancel-failure.test.ts";
     const skipped = name === "09-f-test-api-skipped.test.ts";
     const lifecycle = ["09-d-test-api-producer.test.ts", "09-e-test-api-observer.test.ts"].includes(
       name,
     );
     const count = crashed ? 0 : lifecycle ? 2 : 1;
     expect(file.status, name).toBe(
-      crashed || uncertainMcp || mockedMcpDisposer ? "failed" : "passed",
+      crashed || uncertainMcp || mockedMcpDisposer || failedRunCancellation ? "failed" : "passed",
     );
     if (uncertainMcp || mockedMcpDisposer) {
       expect(file.message).toContain("MCP runtime custody failed");
@@ -510,6 +511,9 @@ async function assertCompletion(
           ? "MCP test teardown could not confirm cleanup"
           : "MCP test teardown cannot use a mocked disposer",
       );
+    } else if (failedRunCancellation) {
+      expect(file.message).toContain("run state failed");
+      expect(file.message).toContain("Synthetic run cancellation failed");
     } else {
       expect(file.message, name).toBe(crashed ? "synthetic collect failure" : "");
     }
@@ -701,9 +705,9 @@ export default defineConfig({
       { reason: "passed" },
       { unhandledErrors: 1 },
       { failedModules: 0 },
-      { failedModules: 5 },
+      { failedModules: 6 },
       { suiteErrors: 0 },
-      { suiteErrors: 5 },
+      { suiteErrors: 6 },
     ]) {
       faults.push([
         `invalid native end: ${JSON.stringify(patch)}`,

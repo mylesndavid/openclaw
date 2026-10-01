@@ -78,6 +78,8 @@ describe("listGatewayMethods", () => {
     "session.suggestions.add",
     "session.suggestions.list",
     "session.suggestions.resolve",
+    "session.reactions.set",
+    "session.reactions.list",
     "session.typing",
     "sessions.companion.ask",
     "sessions.companion.state",
@@ -245,6 +247,10 @@ describe("listGatewayMethods", () => {
       "cron.history",
       "presence.activity",
       "presence.query",
+      "users.merge",
+      "gateway.stop.request",
+      "diagnostics.heapSnapshot",
+      "sessions.catalog.import",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -313,6 +319,10 @@ describe("listGatewayMethods", () => {
       "cron.history",
       "presence.activity",
       "presence.query",
+      "users.merge",
+      "gateway.stop.request",
+      "diagnostics.heapSnapshot",
+      "sessions.catalog.import",
     ]);
   });
 
@@ -509,6 +519,10 @@ describe("listGatewayMethods", () => {
       "cron.history",
       "presence.activity",
       "presence.query",
+      "users.merge",
+      "gateway.stop.request",
+      "diagnostics.heapSnapshot",
+      "sessions.catalog.import",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
