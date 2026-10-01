@@ -106,6 +106,8 @@ describe.skipIf(Boolean(process.versions.bun))(
       import fs from 'node:fs';
       import { DatabaseSync } from 'node:sqlite';
       import { parentPort, workerData } from 'node:worker_threads';
+      const { register } = await import(${JSON.stringify(import.meta.resolve("tsx/esm/api"))});
+      register();
       const { observeSqliteWalPeriodicWork } = await import(${JSON.stringify(new URL("../../infra/sqlite-wal-scheduler.test-support.ts", import.meta.url).href)});
       const target = ${JSON.stringify(realpathSync(source.path))};
       const phase = ${JSON.stringify(phase)};
