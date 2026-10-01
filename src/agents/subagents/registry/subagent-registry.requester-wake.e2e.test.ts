@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { getRuntimeConfig } from "../../../config/config.js";
 import { replaceSessionEntry } from "../../../config/sessions/session-accessor.js";
+import { readDescendantSubagentFallbackReply } from "../../../cron/isolated-agent/subagent-followup.js";
 import { callGateway } from "../../../gateway/call.js";
 import type { GatewayRequestContext } from "../../../gateway/server-methods/types.js";
 import { getAgentEventLifecycleGeneration, onAgentEvent } from "../../../infra/agent-events.js";
@@ -883,6 +884,53 @@ describe("requester settle wake product flow", () => {
       }
     },
   );
+
+  it("keeps a cron run's delete-cleanup child readable after its settle wake", async () => {
+    vi.setSystemTime(100_000);
+    const cronRunSessionKey = "agent:main:cron:job-spawn-only:run:sess-cron";
+    const child = { runId: "run-cron-child", childSessionKey: "agent:main:subagent:cron-child" };
+    const cfg = loadConfigMock();
+    loadConfigMock.mockReturnValue({
+      ...cfg,
+      agents: { ...cfg.agents, defaults: { subagents: { archiveAfterMinutes: 1 } } },
+    });
+    sessionStore[cronRunSessionKey] = { sessionId: "sess-cron", updatedAt: 1 };
+    await replaceSessionEntry(
+      { storePath: sessionStorePath, sessionKey: cronRunSessionKey },
+      sessionStore[cronRunSessionKey],
+    );
+    await registry.initSubagentRegistry();
+    await registry.activateSubagentRegistry(createGatewayContext().resolveGatewayContext);
+    await registry.registerSubagentRun(
+      createSubagentRunParams({
+        ...child,
+        requesterSessionKey: cronRunSessionKey,
+        requesterDisplayKey: "cron",
+        cleanup: "delete",
+        expectsCompletionMessage: true,
+      }),
+    );
+
+    emitCompleted(child.runId, child.childSessionKey, "CRON CHILD ANSWER");
+    await flushOwnedWork();
+    await vi.waitFor(() => {
+      expect(maybeWakeRequesterAfterAllChildrenSettled).toHaveBeenCalledOnce();
+      expect(registry.getSubagentRunByRunId(child.runId)?.requesterSettleWake).toBeUndefined();
+    });
+    await flushOwnedWork();
+    // Delete cleanup removed the child session; the cron run reads the captured result.
+    chatHistoryBySessionKey.delete(child.childSessionKey);
+
+    await expect(
+      readDescendantSubagentFallbackReply({ sessionKey: cronRunSessionKey, runStartedAt: 0 }),
+    ).resolves.toBe("CRON CHILD ANSWER");
+    expect(getAgentCalls()).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await registry.testing.sweepOnceForTests();
+    await flushOwnedWork();
+    expect(registry.getSubagentRunByRunId(child.runId)).toBeUndefined();
+  });
 
   registerRequesterWakeSettlementBoundaryTests({
     requesterSessionKey: MAIN_REQUESTER_SESSION_KEY,
