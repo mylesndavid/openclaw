@@ -19,14 +19,12 @@ import type {
   RepositoryGitHubPublicationPendingQuery,
   RepositoryGitHubPublicationStatusRow,
 } from "../gateway/github-repository-publication.kernel.js";
-import type { OperatorApprovalWorkerOperations } from "../gateway/operator-approval-store.worker-contract.js";
 import type {
   SessionGroupCatalogMutation,
   SessionGroupCatalogMutationResult,
 } from "../gateway/session-group-catalog.types.js";
 import type * as deviceAuth from "../infra/device-auth-store.kernel.js";
 import type { DeviceIdentity } from "../infra/device-identity-store.js";
-import type { ExecAuthorizationWorkerOperations } from "../infra/exec-approvals-contracts.js";
 import type { PreparedSqliteAuditRecord } from "../infra/sqlite-audit-record.kernel.js";
 import type { SqliteFileGeneration } from "../infra/sqlite-file-generation.js";
 import type {
@@ -74,8 +72,6 @@ export type OpenClawStateWorkerOperations = RegisteredStateWorkerOperations &
   TuiLastSessionWorkerOperations &
   SessionStateWorkerOperations &
   SessionUpstreamWorkerOperations &
-  ExecAuthorizationWorkerOperations &
-  OperatorApprovalWorkerOperations &
   PluginStateWorkerOperations &
   UserPreferenceWorkerOperations &
   CronStateWorkerOperations &

@@ -14,13 +14,8 @@ import {
   prepareCronStateWorkerCommand,
 } from "../cron/store/dispatch.worker.js";
 import { readPendingRepositoryGitHubPublicationInDatabase } from "../gateway/github-repository-publication.kernel.js";
-import {
-  executeOperatorApprovalCommand,
-  isOperatorApprovalCommand,
-} from "../gateway/operator-approval-store.worker.js";
 import { mutateSessionGroupCatalogInDatabase } from "../gateway/session-group-catalog.kernel.js";
 import * as deviceAuth from "../infra/device-auth-store.kernel.js";
-import { commitExecAuthorizationsInWorker } from "../infra/exec-approvals-authorization.worker.js";
 import { createSqliteAuditRecordKernel } from "../infra/sqlite-audit-record.kernel.js";
 import {
   readStableSqliteFileGeneration,
@@ -86,15 +81,6 @@ export function executeSharedStateCommand(
   });
   if (stateWorkerRegistry.has(command)) {
     return stateWorkerRegistry.execute(command, { open, stateOptions });
-  }
-  if (command.type === "execApprovals.commitAuthorizations" || isOperatorApprovalCommand(command)) {
-    const databaseOptions = {
-      database: open(),
-      ...stateOptions(),
-    };
-    return command.type === "execApprovals.commitAuthorizations"
-      ? commitExecAuthorizationsInWorker(command.input, databaseOptions)
-      : executeOperatorApprovalCommand(command, databaseOptions);
   }
   if (command.type === "updateRuns.recordStep" || command.type === "updateRuns.recordPhase") {
     return recordUpdateRunMutationInWorker(command, stateOptions(), (stage) =>
