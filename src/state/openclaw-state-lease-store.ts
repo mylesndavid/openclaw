@@ -14,7 +14,7 @@ import type { DB } from "./openclaw-state-db.generated.js";
 import type {
   OpenClawStateLeaseIdentity,
   OpenClawStateLeaseAcquisition,
-} from "./openclaw-state-lease-context.js";
+} from "./openclaw-state-lease.types.js";
 
 type LeaseDatabase = Pick<DB, "state_leases">;
 

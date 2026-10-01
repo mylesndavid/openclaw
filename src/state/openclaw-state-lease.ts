@@ -8,7 +8,7 @@ import {
   getOpenClawDatabaseMaintenanceScope,
   type OpenClawDatabaseMaintenanceScope,
 } from "./openclaw-state-db-async-lifecycle.js";
-import { acquireLease, acquireOpenClawStateLease } from "./openclaw-state-lease-acquisition.js";
+import { acquireOpenClawStateLease } from "./openclaw-state-lease-acquisition.js";
 import { createOpenClawStateLeaseCleanup } from "./openclaw-state-lease-cleanup.js";
 import type {
   OpenClawStateLeaseContext,
@@ -42,7 +42,10 @@ import {
   type OpenClawStateLeaseOwnerIdentity as LeaseIdentity,
 } from "./openclaw-state-lease-storage.js";
 import { createOpenClawStateLeaseWorkerOwner } from "./openclaw-state-lease-worker-owner.js";
-import { createOpenClawStateLeaseWorkerStorage } from "./openclaw-state-lease-worker-storage.js";
+import {
+  acquireLease,
+  createOpenClawStateLeaseWorkerStorage,
+} from "./openclaw-state-lease-worker-storage.js";
 import type { OpenClawStateWorkerContext } from "./openclaw-state-worker-context.types.js";
 
 export type {

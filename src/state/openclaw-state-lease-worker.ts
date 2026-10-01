@@ -17,10 +17,7 @@ import {
   type OpenClawStateDatabase,
 } from "./openclaw-state-db-contract.js";
 import { runOpenClawStateWriteTransaction } from "./openclaw-state-db.js";
-import type {
-  OpenClawStateLeaseLifecycleOperations,
-  OpenClawStateLeaseIdentity,
-} from "./openclaw-state-lease-context.js";
+import type { OpenClawStateLeaseLifecycleOperations } from "./openclaw-state-lease-context.js";
 import {
   createOpenClawStateLeaseLostError,
   OpenClawStateLeaseError,
@@ -36,6 +33,7 @@ import {
   releaseOpenClawStateLeaseInTransaction,
   renewOpenClawStateLeaseInTransaction,
 } from "./openclaw-state-lease-store.js";
+import type { OpenClawStateLeaseIdentity } from "./openclaw-state-lease.types.js";
 
 function takeLeaseExpiryObservation(identity: OpenClawStateLeaseIdentity): BigInt64Array {
   const attachment = takeSqliteWorkerOperationAdmissionAttachment();

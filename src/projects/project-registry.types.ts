@@ -1,4 +1,4 @@
-import type { OpenClawStateLeaseIdentity } from "../state/openclaw-state-lease-context.js";
+import type { OpenClawStateLeaseIdentity } from "../state/openclaw-state-lease.types.js";
 
 export type ProjectRegistryIdentity = {
   id: string;

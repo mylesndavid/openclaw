@@ -14,7 +14,6 @@ import {
   type OpenClawStateDatabaseOptions,
 } from "./openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "./openclaw-state-db.paths.js";
-import type { OpenClawStateLeaseIdentity } from "./openclaw-state-lease-context.js";
 import {
   createOpenClawStateLeaseLostError,
   toOpenClawStateLeaseVerificationError,
@@ -24,6 +23,7 @@ import {
   releaseOpenClawStateLeaseInTransaction,
   renewOpenClawStateLeaseInTransaction,
 } from "./openclaw-state-lease-store.js";
+import type { OpenClawStateLeaseIdentity } from "./openclaw-state-lease.types.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "./openclaw-state-schema.js";
 
 export type OpenClawStateLeaseDatabase = {

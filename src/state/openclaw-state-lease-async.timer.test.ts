@@ -35,6 +35,7 @@ vi.mock("./openclaw-state-lease-worker-storage.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./openclaw-state-lease-worker-storage.js")>();
   return {
     ...actual,
+    acquireLease: mocks.forbidden,
     createOpenClawStateLeaseWorkerStorage: (context: OpenClawStateWorkerContext) =>
       mocks.configureStorage(actual.createOpenClawStateLeaseWorkerStorage(context)),
   };
@@ -53,10 +54,6 @@ vi.mock("./openclaw-state-db-cache.js", () => ({
 }));
 vi.mock("./openclaw-state-lease-process-exit.js", () => ({
   registerProcessExitLeaseCleanup: () => () => {},
-}));
-vi.mock("./openclaw-state-lease-acquisition.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./openclaw-state-lease-acquisition.js")>()),
-  acquireLease: mocks.forbidden,
 }));
 vi.mock("./openclaw-state-lease-storage.js", () => ({
   STATE_LEASE_WRITE_BACKOFF: { initialMs: 25, maxMs: 250, factor: 1.5, jitter: 0.25 },

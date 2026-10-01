@@ -5,13 +5,11 @@ import {
   getOpenClawDatabaseMaintenanceScope,
   type OpenClawStateDatabaseAsyncResource,
 } from "./openclaw-state-db-async-lifecycle.js";
-import type {
-  OpenClawStateAsyncLeaseContext,
-  OpenClawStateLeaseIdentity,
-} from "./openclaw-state-lease-context.js";
+import type { OpenClawStateAsyncLeaseContext } from "./openclaw-state-lease-context.js";
 import type { LeaseHeartbeatCleanup } from "./openclaw-state-lease-heartbeat.js";
 import { withOpenClawStateLeaseWorkerAdmission } from "./openclaw-state-lease-worker-owner.js";
 import { withOpenClawStateLeaseAsync } from "./openclaw-state-lease.js";
+import type { OpenClawStateLeaseIdentity } from "./openclaw-state-lease.types.js";
 import type { OpenClawStateWorkerContext } from "./openclaw-state-worker-context.types.js";
 
 type CreateStorage =
@@ -34,6 +32,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./openclaw-state-lease-worker-storage.js", () => ({
   createOpenClawStateLeaseWorkerStorage: mocks.createStorage,
+  acquireLease: mocks.forbidden,
 }));
 vi.mock("./openclaw-state-lease-heartbeat.js", () => ({
   startOpenClawStateLeaseHeartbeat: mocks.startHeartbeat,
@@ -43,10 +42,6 @@ vi.mock("./openclaw-state-db-cache.js", () => ({
 }));
 vi.mock("./openclaw-state-lease-process-exit.js", () => ({
   registerProcessExitLeaseCleanup: () => mocks.unregisterExit,
-}));
-vi.mock("./openclaw-state-lease-acquisition.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./openclaw-state-lease-acquisition.js")>()),
-  acquireLease: mocks.forbidden,
 }));
 vi.mock("./openclaw-state-lease-storage.js", () => ({
   STATE_LEASE_WRITE_BACKOFF: { initialMs: 25, maxMs: 250, factor: 1.5, jitter: 0.25 },
