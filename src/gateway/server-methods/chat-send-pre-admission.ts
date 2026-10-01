@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from "node:util";
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import { isMainSessionRecoveryReconciliationCandidate } from "../../agents/main-session-recovery/main-session-recovery-state.js";
 import { resolveSessionWorkStartError } from "../../config/sessions.js";
-import { lookupSessionGoalOperation } from "../../config/sessions/goals-operations-read.js";
 import { SessionGoalOperationError } from "../../config/sessions/goals-operations.js";
 import { SESSION_ROUTING_CHANGED_ERROR_REASON } from "../../config/sessions/main-session.js";
 import { hasRestartRecoveryTerminalRun } from "../../config/sessions/restart-recovery-state.js";
@@ -41,6 +40,7 @@ import {
   ACTIVE_LEAF_CHANGED_ERROR_REASON,
   assertExpectedLeafActive,
 } from "./chat-send-active-leaf.js";
+import { prepareGoalChatSendRetry } from "./chat-send-goal-retry.js";
 import type { NormalizedChatSendRequest } from "./chat-send-request.js";
 import {
   captureAdmittedChatSendSessionSettings,
@@ -300,27 +300,6 @@ export function respondChatSendRetry(params: ChatSendRetryParams): boolean {
   return false;
 }
 
-export async function prepareGoalChatSendRetry({ request, session }: ChatSendPreAdmissionParams) {
-  if (!request.goalOperation) {
-    return undefined;
-  }
-  try {
-    return await lookupSessionGoalOperation({
-      sessionKey: session.sessionKey,
-      storePath: session.storePath,
-      agentId: session.agentId,
-      expectedSessionId:
-        session.entry?.sessionId ?? session.backingSessionId ?? session.clientRunId,
-      operation: request.goalOperation,
-    });
-  } catch (error) {
-    if (!(error instanceof SessionGoalOperationError)) {
-      throw error;
-    }
-    return error;
-  }
-}
-
 /** Consume prepared receipts and current RAM ownership without yielding before reservation. */
 export function inspectGoalChatSendRetry({
   request,
@@ -329,10 +308,10 @@ export function inspectGoalChatSendRetry({
   context,
   durableClaimAccepted,
   assertCurrent,
-  receipt,
+  prepared,
 }: ChatSendPreAdmissionParams & {
   durableClaimAccepted?: boolean;
-  receipt: Awaited<ReturnType<typeof prepareGoalChatSendRetry>>;
+  prepared: Awaited<ReturnType<typeof prepareGoalChatSendRetry>>;
 }) {
   assertCurrent?.();
   const { clientRunId, pendingChatSendKey } = session;
@@ -340,6 +319,7 @@ export function inspectGoalChatSendRetry({
     return { kind: "new" } as const;
   }
   try {
+    const receipt = prepared?.receipt;
     if (receipt instanceof SessionGoalOperationError) {
       throw receipt;
     }
@@ -355,9 +335,16 @@ export function inspectGoalChatSendRetry({
     const identityConflict =
       retainedIdentity !== undefined &&
       retainedIdentity !== request.goalOperation.requestFingerprint;
+    const cachedResponse = readChatSendDedupeResponse(context.dedupe, clientRunId);
+    // A completed admission may publish after the worker's receipt snapshot.
+    const newlyPublishedResponse =
+      retainedIdentity === request.goalOperation.requestFingerprint &&
+      cachedResponse !== undefined &&
+      cachedResponse !== prepared?.dedupe;
     if (
       !identityConflict &&
       (pending?.payload.goalFingerprint === request.goalOperation.requestFingerprint ||
+        newlyPublishedResponse ||
         (!pending && !durableClaimAccepted && context.chatAbortControllers.has(clientRunId)))
     ) {
       respond(
@@ -373,7 +360,7 @@ export function inspectGoalChatSendRetry({
       identityConflict ||
       pending ||
       durableClaimAccepted ||
-      readChatSendDedupeResponse(context.dedupe, clientRunId) ||
+      cachedResponse ||
       context.chatRunState.hasAbortMarker(clientRunId) ||
       context.chatAbortControllers.has(clientRunId) ||
       context.chatQueuedTurns?.has(clientRunId)
@@ -439,7 +426,7 @@ export async function runChatSendPreAdmission(
   if (request.goalOperation) {
     const retry = inspectGoalChatSendRetry({
       ...params,
-      receipt: await prepareGoalChatSendRetry(params),
+      prepared: await prepareGoalChatSendRetry(params),
     });
     if (retry.kind === "settled") {
       return false;
@@ -692,7 +679,7 @@ export async function runChatSendPreAdmission(
       const retry = inspectGoalChatSendRetry({
         ...params,
         durableClaimAccepted: true,
-        receipt: await prepareGoalChatSendRetry(params),
+        prepared: await prepareGoalChatSendRetry(params),
       });
       if (retry.kind === "replay") {
         respond(true, { ...retry.receipt, replayed: true }, undefined, {

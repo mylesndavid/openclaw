@@ -198,7 +198,7 @@ function installReplyDispatchHook(eligibleDispatchKinds?: readonly ["acp"]) {
 }
 
 async function rpc(
-  method: "chat.send" | "chat.history" | "sessions.goal.update",
+  method: "chat.send" | "chat.history" | "chat.abort" | "sessions.goal.update",
   params: Record<string, unknown>,
   onResponse?: RespondFn,
   requestClient: GatewayClient = client,
@@ -483,7 +483,7 @@ describe("Goal chat admission and continuation", () => {
   it.each(["objective", "issuedAtMs"] as const)(
     "rejects a concurrent operation ID collision on %s",
     async (collision) => {
-      const firstRequest = goalStart("Finish the release checklist", "goal-collision");
+      const firstRequest = goalStart("Finish the release checklist", `goal-collision-${collision}`);
       const secondRequest = {
         ...firstRequest,
         ...(collision === "objective"
@@ -663,6 +663,85 @@ describe("Goal chat admission and continuation", () => {
       expect(userMessages()).toEqual([expect.objectContaining({ content: request.message })]);
       expect(runEmbeddedAgent).toHaveBeenCalledOnce();
     });
+  });
+
+  it("keeps a receipt miss retryable when an identical request completes during lookup", async () => {
+    const request = goalStart("Replay the Goal committed while this lookup was pending");
+    const lookup = goalOperationReads.lookupSessionGoalOperation;
+    const entered = createDeferred<Awaited<ReturnType<typeof lookup>>>();
+    const release = createDeferred();
+    const lookupSpy = vi
+      .spyOn(goalOperationReads, "lookupSessionGoalOperation")
+      .mockImplementationOnce(async (options) => {
+        const receipt = await lookup(options);
+        entered.resolve(receipt);
+        await release.promise;
+        return receipt;
+      });
+    const pending = rpc("chat.send", request);
+    try {
+      expect(
+        await awaitGateBeforeSettlement(
+          entered.promise,
+          pending,
+          "Goal request skipped its receipt lookup.",
+        ),
+      ).toBeUndefined();
+      const started = await rpc("chat.send", request);
+      expect(started.mock.calls[0]?.[0]).toBe(true);
+      await waitForModelRun();
+      await waitForDispatchEnd();
+      expect(context.dedupe.get(`chat:${request.idempotencyKey}`)?.payload).toMatchObject({
+        status: "ok",
+      });
+      release.resolve();
+      const stale = await pending;
+      expect(stale).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "UNAVAILABLE", retryable: true }),
+      );
+      const replay = await rpc("chat.send", request);
+      expect(replay.mock.calls[0]?.[1]).toMatchObject({
+        replayed: true,
+        runId: request.idempotencyKey,
+        goalId: loadSessionEntry(scope())?.goal?.id,
+      });
+      expect(userMessages()).toEqual([expect.objectContaining({ content: request.message })]);
+      expect(runEmbeddedAgent).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+      await pending.catch(() => undefined);
+      lookupSpy.mockRestore();
+    }
+  });
+
+  it("keeps a Goal aborted before persistence definitively rejected on retry", async () => {
+    const params = goalStart("Cancel this Goal before its durable receipt exists");
+    const respond = vi.fn<RespondFn>();
+    await handleChatSend(
+      {
+        req: { type: "req", id: "goal-precommit-abort", method: "chat.send", params },
+        params,
+        client,
+        context,
+        respond,
+        isWebchatConnect: () => true,
+      },
+      async () => {
+        const aborted = await rpc("chat.abort", { sessionKey, runId: params.idempotencyKey });
+        expect(aborted.mock.calls[0]?.[1]).toMatchObject({ aborted: true });
+        return true;
+      },
+    );
+    expect(respond.mock.calls[0]?.[1]).toMatchObject({ status: "timeout", summary: "aborted" });
+    const retry = await rpc("chat.send", params);
+    expect(retry.mock.calls[0]?.[2]).toMatchObject({
+      code: "INVALID_REQUEST",
+      details: { reason: "goal-operation-conflict" },
+    });
+    expect(loadSessionEntry(scope())?.goal).toBeUndefined();
+    expectNoDispatch();
   });
 
   it("does not let ordinary chat displace a Goal reservation with the same run ID", async () => {

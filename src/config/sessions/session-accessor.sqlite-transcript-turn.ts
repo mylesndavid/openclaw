@@ -149,7 +149,7 @@ export async function appendExpectedSessionTranscriptTurn(
                 }),
               toDatabaseOptions(resolved),
             );
-            if (current.found && current.value) {
+            if (current.found ? current.value : resolveExpectedEntry(undefined)) {
               return;
             }
             throw rebound;
