@@ -29,7 +29,6 @@ import {
 import { formatErrorMessage } from "../infra/errors.js";
 import {
   readMigrationArtifactIdentity,
-  sameMigrationArtifact,
   moveMigrationArtifact,
   type MigrationArtifactIdentity,
 } from "../infra/session-sqlite-migration-artifact.js";
