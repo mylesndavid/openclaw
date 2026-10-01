@@ -16,6 +16,7 @@ import {
 import { runOpenClawAgentWriteAdmission } from "../../state/openclaw-agent-write-admission.js";
 import { closeOpenClawStateDatabaseAsync } from "../../state/openclaw-state-db-cache.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
+import { sessionNativeProcessEntrypoints } from "./native-process-runtime.test-support.js";
 import { ensureSessionEntrySync } from "./session-accessor.sqlite-initial-entry.js";
 import { runSqliteSessionReclamation } from "./session-accessor.sqlite-reclamation-run.js";
 import { createLifecycleArtifactReclamationPlan } from "./session-accessor.sqlite-reclamation.js";
@@ -108,7 +109,7 @@ describe.skipIf(Boolean(process.versions.bun))(
       import { parentPort, workerData } from 'node:worker_threads';
       const { register } = await import(${JSON.stringify(import.meta.resolve("tsx/esm/api"))});
       register();
-      const { observeSqliteWalPeriodicWork } = await import(${JSON.stringify(new URL("../../infra/sqlite-wal-scheduler.test-support.ts", import.meta.url).href)});
+      const { observeSqliteWalPeriodicWork } = await import(${JSON.stringify(resolveRuntimeWorkerUrl(sessionNativeProcessEntrypoints.walScheduler).href)});
       const target = ${JSON.stringify(realpathSync(source.path))};
       const phase = ${JSON.stringify(phase)};
       const unsafe = ${JSON.stringify(unsafe)};
