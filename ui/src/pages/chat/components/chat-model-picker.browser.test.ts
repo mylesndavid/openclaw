@@ -2,6 +2,8 @@ import type WaPopup from "@awesome.me/webawesome/dist/components/popup/popup.js"
 import { html, nothing, render } from "lit";
 import { afterEach, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
+import "../../../styles/base.css";
+import "../../../styles/chat/composer.css";
 import { focusChatComposerFromPrintableKeydown } from "../chat-pane-shared.ts";
 import { focusComposerFromChrome } from "./chat-composer-dom.ts";
 import { renderChatModelPicker } from "./chat-model-picker.ts";
@@ -127,11 +129,16 @@ it("does not steal focus from a picker control on catalog rerender", async () =>
   const { params, update, trigger, search, toggle } = mountPicker();
   await toggle(() => page.getByText("Alpha", { exact: true }).first().click());
   await userEvent.keyboard("beta");
-  const group = container.querySelector<HTMLButtonElement>("[data-chat-model-provider-toggle]")!;
-  group.focus();
+  // Filtering hides provider headings; move focus to a visible result instead.
+  const option = container.querySelector<HTMLButtonElement>(
+    '[data-chat-model-option="example/beta"]',
+  )!;
+  expect(option.checkVisibility()).toBe(true);
+  option.focus();
+  expect(document.activeElement).toBe(option);
   update();
   await Promise.resolve();
-  expect(document.activeElement).toBe(group);
+  expect(document.activeElement).toBe(option);
   expect(search.value).toBe("beta");
   trigger.focus();
   await userEvent.keyboard("1");
