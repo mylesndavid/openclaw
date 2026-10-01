@@ -280,6 +280,8 @@ Malformed credential values and unreadable rotation-state JSON remain intact;
 they do not block repairs to supported fields. Alias renames still require valid
 complete stores and rotation state. Doctor defers affected config, session, and
 personal-account references whenever an owner cannot safely rename its IDs.
+An occupied alias destination or changed account receipt defers that mapping
+without preventing independent credential-field repairs or safe aliases.
 
 The conversion moves a recognized `mode` to a missing `type`, changes
 `type: "apiKey"` to `api_key`, and moves usable `apiKey` or `api_key` values to

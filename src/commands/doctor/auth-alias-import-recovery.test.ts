@@ -23,7 +23,7 @@ import {
 import { repairAuthProfileMigration } from "./auth-profile-repair.js";
 import { runDoctorRepairSequence } from "./repair-sequencing.js";
 
-it("defers a stale supplied alias when its JSON destination is already occupied", async () => {
+it("repairs credential fields while deferring an occupied JSON alias destination", async () => {
   await withOpenClawTestState(
     { label: "alias-stale-json-destination", layout: "home" },
     async (fixture) => {
@@ -40,7 +40,16 @@ it("defers a stale supplied alias when its JSON destination is already occupied"
             {
               version: 1,
               profiles: {
-                [to]: { type: "api_key", provider: "anthropic", key: "synthetic-existing-account" },
+                [to]: {
+                  mode: "api_key",
+                  provider: "anthropic",
+                  apiKey: "synthetic-existing-account",
+                },
+                "example:legacy": {
+                  type: "api_key",
+                  provider: "example",
+                  api_key: "synthetic-independent-account",
+                },
               },
             },
             undefined,
@@ -58,11 +67,24 @@ it("defers a stale supplied alias when its JSON destination is already occupied"
       const repaired = await repairAuthProfileMigration({
         cfg,
         env: fixture.env,
-        prompter: { shouldRepair: true, confirmAutoFix: async () => true },
+        prompter: { shouldRepair: false, confirmAutoFix: async () => true },
         profileIdMap: new Map([[from, to]]),
       });
       expect(repaired.profileIdMap.size).toBe(0);
       expect(repaired.config.auth).toEqual(cfg.auth);
+      expect(loadPersistedSharedAuthProfileStore(fixture.env)?.profiles).toEqual({
+        [from]: {
+          type: "api_key",
+          provider: "claude-cli",
+          key: "synthetic-imported-account",
+        },
+        [to]: { type: "api_key", provider: "anthropic", key: "synthetic-existing-account" },
+        "example:legacy": {
+          type: "api_key",
+          provider: "example",
+          key: "synthetic-independent-account",
+        },
+      });
       expect(readPersistedSharedAuthProfileStoreRaw(fixture.env)).toMatchObject({
         profiles: {
           [from]: { key: "synthetic-imported-account" },

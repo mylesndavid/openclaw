@@ -1920,27 +1920,17 @@ export async function maybeRepairLegacyAuthProfileStores(params: {
         occupied.has(to) &&
         (occupied.has(from) || recovery.recovered.get(from) !== to)
       ) {
-        return {
-          changes: [],
-          warnings: [
-            ...warnings,
-            `Deferred stale auth profile alias ${from}; the target is occupied.`,
-          ],
-          profileIdMap: new Map(),
-        };
+        profileIdMap.delete(from);
+        warnings.push(`Deferred stale auth profile alias ${from}; the target is occupied.`);
       }
     }
   }
   for (const from of profileIdMap.keys()) {
     if (recovery.blocked.has(from)) {
-      return {
-        changes: [],
-        warnings: [
-          ...warnings,
-          `Kept auth profile ${from} unchanged because its recorded account changed; reconcile the migration before retrying.`,
-        ],
-        profileIdMap: new Map(),
-      };
+      profileIdMap.delete(from);
+      warnings.push(
+        `Kept auth profile ${from} unchanged because its recorded account changed; reconcile the migration before retrying.`,
+      );
     }
   }
   const migrated = planned.map((target) => {
