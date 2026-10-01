@@ -49,6 +49,7 @@ import {
   triageFailureSchema,
 } from "./update-managed-service-handoff-rows.js";
 import {
+  isRetiredManagedHandoffLeasePayload,
   parseManagedHandoffLeasePayload,
   type ManagedHandoffLeaseAction,
 } from "./update-managed-service-handoff-schema.js";
