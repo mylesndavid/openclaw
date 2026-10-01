@@ -615,8 +615,11 @@ if (process.argv.some(arg => arg.startsWith("--stdin-filepath="))) process.stdou
     const { dir, owner, pkg, binding, dependency, cli, formatter, env } = toolingFixture();
     if (kind === "wrong pin" || kind === "wrong package") {
       const manifest = JSON.parse(readFileSync(path.join(pkg, "package.json"), "utf8"));
-      if (kind === "wrong pin") manifest.version = "0.60.0";
-      else manifest.name = "another-formatter";
+      if (kind === "wrong pin") {
+        manifest.version = "0.60.0";
+      } else {
+        manifest.name = "another-formatter";
+      }
       writeFileSync(path.join(pkg, "package.json"), JSON.stringify(manifest));
     } else if (kind === "unrelated") {
       run(owner, "git", [
@@ -635,8 +638,11 @@ if (process.argv.some(arg => arg.startsWith("--stdin-filepath="))) process.stdou
       symlinkSync(outside, pkg);
     } else if (kind === "wrong platform" || kind === "wrong binding pin") {
       const manifest = JSON.parse(readFileSync(path.join(binding, "package.json"), "utf8"));
-      if (kind === "wrong platform") manifest.cpu = ["unsupported"];
-      else manifest.version = "0.60.0";
+      if (kind === "wrong platform") {
+        manifest.cpu = ["unsupported"];
+      } else {
+        manifest.version = "0.60.0";
+      }
       writeFileSync(path.join(binding, "package.json"), JSON.stringify(manifest));
     } else if (kind === "broken binding") {
       writeFileSync(
