@@ -14,7 +14,7 @@ import type {
   SessionRow,
 } from "../../../packages/gateway-protocol/src/schema/sessions-row.js";
 import type { CronListPageResult } from "../../../src/cron/service/list-page-types.js";
-import type { ModelAuthStatusResult } from "../../../src/gateway/server-methods/models-auth-status.js";
+import type { ModelAuthStatusResult } from "../../../src/gateway/server-methods/models-auth-status.types.js";
 import type {
   GatewaySessionRow as GatewayWireSessionRow,
   GatewaySessionsDefaults as GatewayWireSessionsDefaults,
@@ -327,7 +327,7 @@ export type {
   ModelAuthStatusProvider,
   ModelAuthStatusProfile,
   ModelAuthStatusResult,
-} from "../../../src/gateway/server-methods/models-auth-status.js";
+} from "../../../src/gateway/server-methods/models-auth-status.types.js";
 export type ProviderLoginOption = NonNullable<
   NonNullable<ModelAuthStatusResult["providerCapabilities"]>[number]["loginOptions"]
 >[number];

@@ -25,7 +25,6 @@ vi.mock("../../agents/auth-profiles/store.js", () => ({
 }));
 vi.mock("./model-auth-agent-scope.js", () => ({
   resolveModelAuthAgentScope: mocks.scope,
-  modelAuthAgentScopeError: vi.fn(),
 }));
 vi.mock("../../agents/model-selection.js", () => ({ resolveDefaultModelForAgent: mocks.defaults }));
 vi.mock("../../flows/search-setup.js", () => ({ listSearchProviderOptions: mocks.options }));

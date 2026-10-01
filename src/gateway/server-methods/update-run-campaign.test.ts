@@ -13,6 +13,7 @@ import {
 import { withEnvAsync } from "../../test-utils/env.js";
 import { createTestGatewayScheduler } from "../../test-utils/gateway-scheduler-clock.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../../test-utils/temp-home.js";
+import type { RespondFn } from "./types.js";
 
 let ledgerHome: TempHomeEnv | undefined;
 let lifecycle: UpdateCheckLifecycle;
@@ -77,10 +78,6 @@ const scheduleGatewayRestartMock = vi.fn(() => ({ scheduled: true }));
 const logGatewayInfoMock = vi.fn();
 const writeRestartSentinelMock = vi.fn(async () => undefined);
 const recordLatestUpdateRestartSentinelMock = vi.fn();
-
-vi.mock("../../../packages/gateway-protocol/src/index.js", () => ({
-  validateUpdateRunParams: () => true,
-}));
 
 vi.mock("../../config/commands.flags.js", () => ({
   isRestartEnabled: () => true,
@@ -209,10 +206,6 @@ vi.mock("./restart-request.js", () => ({
   parseRestartRequestParams: () => ({}),
 }));
 
-vi.mock("./validation.js", () => ({
-  assertValidParams: () => true,
-}));
-
 beforeEach(() => {
   currentCampaignId = "campaign-1";
   updateSchedule = null;
@@ -331,7 +324,7 @@ function mockPackageInstallSurface(kind: "global" | "package-root"): void {
 
 async function invokeUpdateRun(
   params: Record<string, unknown> = {},
-  respond: (ok: boolean, response?: unknown) => void = () => undefined,
+  respond: RespondFn = () => undefined,
 ): Promise<void> {
   const { updateHandlers } = await import("./update.js");
   await expectDefined(
@@ -612,9 +605,17 @@ describe("update.run campaign ownership", () => {
     ])("rejects malformed $name before any update mutation", async ({ target }) => {
       detectRespawnSupervisorMock.mockReturnValueOnce("launchd");
 
-      const response = await captureUpdateRun({ target });
+      const respond = vi.fn();
+      await invokeUpdateRun({ target }, respond);
 
-      expect(response?.result).toMatchObject({ status: "error", reason: "invalid-update-target" });
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({
+          code: "INVALID_REQUEST",
+          message: expect.stringContaining("invalid update.run params:"),
+        }),
+      );
       expectNoUpdateMutation();
       expect(adoptCampaignMock).not.toHaveBeenCalled();
     });

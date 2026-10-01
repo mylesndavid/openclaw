@@ -133,6 +133,15 @@ export type SessionObserverRevisionFloor = Pick<
   "sessionId" | "lifecycleRevision" | "revision" | "previousDigest"
 >;
 
+export function snapshotSessionObserverRevisionFloor({
+  sessionId,
+  lifecycleRevision,
+  revision,
+  previousDigest,
+}: SessionObserverRevisionFloor): SessionObserverRevisionFloor {
+  return { sessionId, lifecycleRevision, revision, previousDigest };
+}
+
 export function rememberSessionObserverRevisionFloor(
   floors: Map<string, SessionObserverRevisionFloor>,
   sessionKey: string,
@@ -168,12 +177,7 @@ export function rememberSessionObserverDormantRun(
     rememberSessionObserverRevisionFloor(
       floors,
       resolveSessionSubscriptionKey(evicted.sessionKey, evicted.agentId),
-      {
-        sessionId: evicted.sessionId,
-        lifecycleRevision: evicted.lifecycleRevision,
-        revision: evicted.revision,
-        previousDigest: evicted.previousDigest,
-      },
+      snapshotSessionObserverRevisionFloor(evicted),
     );
   }
 }
