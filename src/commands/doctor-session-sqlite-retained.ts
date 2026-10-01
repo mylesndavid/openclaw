@@ -11,20 +11,27 @@ import {
   type SessionStoreTarget,
 } from "../config/sessions/targets.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { retireDeferredPluginSessionImport } from "../infra/deferred-plugin-session-retirement.js";
 import {
+  readDeferredPluginMigrations,
+  withDeferredPluginMigrationsCurrent,
+} from "../infra/deferred-plugin-migrations.js";
+import {
+  DeferredPluginSessionImportSchema,
   hasDeferredPluginSessionImport,
   prepareSessionSourceVerification,
   readDeferredPluginSessionImport,
+  readDeferredPluginSessionImportReceipt,
   rebuildDeferredPluginSessionSourceIndex,
   resolveVerifiedSessionSource,
   type DeferredPluginSessionImport,
+  type SessionImportSource,
 } from "../infra/deferred-plugin-session-sources.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
   moveMigrationArtifact,
   readMigrationArtifactIdentity,
   sameMigrationArtifact,
+  statMigrationPath,
   type MigrationArtifactIdentity,
 } from "../infra/session-sqlite-migration-artifact.js";
 import type { DoctorSessionSqliteIssue } from "../infra/session-sqlite-migration-issues.js";
@@ -42,10 +49,12 @@ import {
   readTranscriptFingerprint,
   resolveTargetSqlitePath,
 } from "../infra/session-sqlite-migration-readers.js";
+import { markLegacyMigrationSourceRemovedInDatabase } from "../infra/state-migrations.receipts.js";
 import {
   createRetainedAgentDatabaseMatcher,
   hasSqliteFileFamily,
 } from "../state/agent-deletion-discovery.js";
+import { runOpenClawStateWriteTransaction } from "../state/openclaw-state-db.js";
 import { planSessionJsonlArchiveMove } from "./doctor-session-sqlite-archive.js";
 import { countLegacyTranscript } from "./doctor-session-sqlite-diagnostics.js";
 import {
@@ -56,6 +65,60 @@ import type {
   DoctorSessionSqliteMode,
   DoctorSessionSqliteTargetReport,
 } from "./doctor-session-sqlite-types.js";
+
+/** Archival, not plugin completion alone, ends the original index's no-replay obligation. */
+export function retireDeferredPluginSessionImport(
+  params: SessionImportSource & {
+    completedPluginIds?: readonly string[];
+    assertCurrent?: () => void;
+  },
+): void {
+  const receipt = readDeferredPluginSessionImportReceipt(params);
+  if (!receipt) {
+    return;
+  }
+  const recorded = DeferredPluginSessionImportSchema.parse(JSON.parse(receipt.reportJson));
+  const expectedPending = readDeferredPluginMigrations({ env: params.env });
+  if (
+    expectedPending.some(
+      (pending) =>
+        recorded.pluginIds.includes(pending.pluginId) &&
+        !params.completedPluginIds?.includes(pending.pluginId),
+    )
+  ) {
+    return;
+  }
+  if (
+    statMigrationPath(params.target.storePath) ||
+    recorded.sources.some((source) => statMigrationPath(source.path))
+  ) {
+    return;
+  }
+  runOpenClawStateWriteTransaction(
+    ({ db }) =>
+      withDeferredPluginMigrationsCurrent({ env: params.env, expectedPending }, () => {
+        params.assertCurrent?.();
+        if (
+          !isDeepStrictEqual(
+            readDeferredPluginSessionImportReceipt({ ...params, database: db }),
+            receipt,
+          )
+        ) {
+          throw new Error("Deferred session import receipt changed before retirement.");
+        }
+        if (
+          statMigrationPath(params.target.storePath) ||
+          recorded.sources.some((source) => statMigrationPath(source.path))
+        ) {
+          return;
+        }
+        readDeferredPluginSessionImport({ ...params, database: db });
+        markLegacyMigrationSourceRemovedInDatabase(db, receipt.sourceKey);
+      }),
+    { env: params.env },
+    { operationLabel: "state.retire-plugin-session-source" },
+  );
+}
 
 /** Receipt recovery belongs to offline Doctor; canonical session data is never replayed. */
 export async function prepareRetainedSessionImport(

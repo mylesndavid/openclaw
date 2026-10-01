@@ -19,7 +19,6 @@ import {
   withDeferredPluginMigrationsCurrent,
   type DeferredPluginMigration,
 } from "../infra/deferred-plugin-migrations.js";
-import { retireDeferredPluginSessionImport } from "../infra/deferred-plugin-session-retirement.js";
 import {
   captureDeferredPluginSessionSources,
   deferredPluginSessionStoreIds,
@@ -88,6 +87,7 @@ import {
   archiveConflictingRetainedSessionSources,
   countRetainedSessionSources,
   prepareRetainedSessionImport,
+  retireDeferredPluginSessionImport,
 } from "./doctor-session-sqlite-retained.js";
 import { settleDuplicateSessionSqliteArchives } from "./doctor-session-sqlite-retirement.js";
 import {
