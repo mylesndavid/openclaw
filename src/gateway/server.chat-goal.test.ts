@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { StatementSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
+import { awaitGateBeforeSettlement, createDeferred } from "../../test/helpers/promise.js";
+import { observeSqliteReadSql } from "../../test/helpers/sqlite-statement-execution-counter.js";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
 import * as embeddedAgent from "../agents/embedded-agent.js";
 import { getReplyFromConfig } from "../auto-reply/reply/get-reply.js";
 import { clearConfigCache, getRuntimeConfig } from "../config/config.js";
+import * as goalOperationReads from "../config/sessions/goals-operations-read.js";
 import {
   listSessionParticipantsReadOnly,
   loadSessionEntry,
@@ -435,13 +438,20 @@ describe("Goal chat admission and continuation", () => {
       expect(messagesAtAck[0]).not.toHaveProperty("display", false);
       await waitForModelRun();
       expect(runEmbeddedAgent.mock.calls[0]?.[0].prompt).toContain(objective);
-      const replay = await rpc("chat.send", request);
-      expect(replay).toHaveBeenCalledWith(
-        true,
-        expect.objectContaining({ replayed: true, goalId: entryAtAck?.goal?.id }),
-        undefined,
-        expect.anything(),
-      );
+      context.dedupe.clear();
+      const reads = observeSqliteReadSql(StatementSync.prototype);
+      try {
+        const replay = await rpc("chat.send", request);
+        expect(replay).toHaveBeenCalledWith(
+          true,
+          expect.objectContaining({ replayed: true, goalId: entryAtAck?.goal?.id }),
+          undefined,
+          expect.anything(),
+        );
+        expect(reads.queries.filter((sql) => sql.includes("session_goal_operations"))).toEqual([]);
+      } finally {
+        reads.restore();
+      }
       expect(userMessages()).toHaveLength(1);
       expect(runEmbeddedAgent).toHaveBeenCalledOnce();
     });
@@ -514,6 +524,110 @@ describe("Goal chat admission and continuation", () => {
     await handleChatSend(options, async () => false);
     expect(loadSessionEntry(scope())?.goal).toBeUndefined();
     expectNoDispatch();
+  });
+
+  it.each(["caller revoked", "worker rejected"] as const)(
+    "leaves no admission when a delayed receipt lookup settles after %s",
+    async (outcome) => {
+      const entered = createDeferred();
+      const release = createDeferred();
+      const lookup = goalOperationReads.lookupSessionGoalOperation;
+      const lookupSpy = vi
+        .spyOn(goalOperationReads, "lookupSessionGoalOperation")
+        .mockImplementationOnce(async (options) => {
+          entered.resolve();
+          await release.promise;
+          if (outcome === "worker rejected") {
+            throw new Error("Goal receipt reader failed.");
+          }
+          return await lookup(options);
+        });
+      let current = true;
+      const params = goalStart("Wait for the receipt before reserving this Goal");
+      const respond = vi.fn<RespondFn>();
+      const pending = handleChatSend({
+        req: { type: "req", id: "goal-lookup-yield", method: "chat.send", params },
+        params,
+        client,
+        context,
+        respond,
+        isWebchatConnect: () => true,
+        hasCurrentClientAuthority: () => current,
+      });
+      try {
+        await awaitGateBeforeSettlement(
+          entered.promise,
+          pending,
+          "Goal receipt lookup was skipped.",
+        );
+        expect(context.dedupe.size).toBe(0);
+        expect(respond).not.toHaveBeenCalled();
+        current = outcome !== "caller revoked";
+        release.resolve();
+        await expect(pending).rejects.toThrow(
+          outcome === "caller revoked"
+            ? "Gateway caller authority is no longer active."
+            : "Goal receipt reader failed.",
+        );
+        expect(loadSessionEntry(scope())?.goal).toBeUndefined();
+        expect(context.dedupe.size).toBe(0);
+        expect(respond).not.toHaveBeenCalled();
+        expectNoDispatch();
+      } finally {
+        release.resolve();
+        await pending.catch(() => undefined);
+        lookupSpy.mockRestore();
+      }
+    },
+  );
+
+  it("rejects a prepared retry receipt after its session is rebound", async () => {
+    const request = goalStart("Keep this receipt bound to its original session");
+    const started = await rpc("chat.send", request);
+    expect(started.mock.calls[0]?.[0]).toBe(true);
+    await waitForModelRun();
+    await waitForDispatchEnd();
+    context.dedupe.clear();
+
+    const lookup = goalOperationReads.lookupSessionGoalOperation;
+    const entered = createDeferred<Awaited<ReturnType<typeof lookup>>>();
+    const release = createDeferred();
+    const lookupSpy = vi
+      .spyOn(goalOperationReads, "lookupSessionGoalOperation")
+      .mockImplementationOnce(async (options) => {
+        const receipt = await lookup(options);
+        entered.resolve(receipt);
+        await release.promise;
+        return receipt;
+      });
+    const pending = rpc("chat.send", request);
+    try {
+      const receipt = await awaitGateBeforeSettlement(
+        entered.promise,
+        pending,
+        "Goal retry skipped its receipt lookup.",
+      );
+      expect(receipt).toMatchObject({ runId: request.idempotencyKey });
+      const reboundSessionId = randomUUID();
+      await patchSessionEntryCore(scope(), () => ({ sessionId: reboundSessionId }));
+      release.resolve();
+      const response = await pending;
+      expect(response).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({
+          code: "INVALID_REQUEST",
+          details: expect.objectContaining({ code: "SESSION_MUTATION_AUTHORIZATION_CHANGED" }),
+        }),
+      );
+      expect(loadSessionEntry(scope())?.sessionId).toBe(reboundSessionId);
+      expect(context.chatAbortControllers.size).toBe(0);
+      expect(runEmbeddedAgent).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+      await pending.catch(() => undefined);
+      lookupSpy.mockRestore();
+    }
   });
 
   it("keeps simultaneous identical Goal retries to one durable turn and dispatch", async () => {

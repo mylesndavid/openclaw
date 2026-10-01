@@ -48,6 +48,7 @@ import {
 import { assertExpectedLeafActive } from "./chat-send-active-leaf.js";
 import {
   inspectGoalChatSendRetry,
+  prepareGoalChatSendRetry,
   readChatSendDedupeResponse,
   resolveChatSendRequestConflict,
   respondChatSendAdmissionError,
@@ -130,7 +131,12 @@ export async function admitChatSend(
       entry: context.dedupe.get(pendingChatSendKey),
       keyPrefix: PENDING_CHAT_SEND_DEDUPE_PREFIX,
     });
-  const goalRetry = inspectGoalChatSendRetry(params);
+  const goalReceipt = request.goalOperation ? await prepareGoalChatSendRetry(params) : undefined;
+  if (request.goalOperation) {
+    params.assertCurrent?.();
+    assertSessionTargetCurrent();
+  }
+  const goalRetry = inspectGoalChatSendRetry({ ...params, receipt: goalReceipt });
   if (goalRetry.kind !== "new") {
     if (goalRetry.kind === "replay") {
       respond(true, { ...goalRetry.receipt, replayed: true }, undefined, {

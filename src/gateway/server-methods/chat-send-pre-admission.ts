@@ -2,10 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import { isMainSessionRecoveryReconciliationCandidate } from "../../agents/main-session-recovery/main-session-recovery-state.js";
 import { resolveSessionWorkStartError } from "../../config/sessions.js";
-import {
-  lookupSessionGoalOperation,
-  SessionGoalOperationError,
-} from "../../config/sessions/goals-operations.js";
+import { lookupSessionGoalOperation } from "../../config/sessions/goals-operations-read.js";
+import { SessionGoalOperationError } from "../../config/sessions/goals-operations.js";
 import { SESSION_ROUTING_CHANGED_ERROR_REASON } from "../../config/sessions/main-session.js";
 import { hasRestartRecoveryTerminalRun } from "../../config/sessions/restart-recovery-state.js";
 import {
@@ -302,7 +300,28 @@ export function respondChatSendRetry(params: ChatSendRetryParams): boolean {
   return false;
 }
 
-/** Recheck synchronously at reservation: recovery lookups can yield to a competing request. */
+export async function prepareGoalChatSendRetry({ request, session }: ChatSendPreAdmissionParams) {
+  if (!request.goalOperation) {
+    return undefined;
+  }
+  try {
+    return await lookupSessionGoalOperation({
+      sessionKey: session.sessionKey,
+      storePath: session.storePath,
+      agentId: session.agentId,
+      expectedSessionId:
+        session.entry?.sessionId ?? session.backingSessionId ?? session.clientRunId,
+      operation: request.goalOperation,
+    });
+  } catch (error) {
+    if (!(error instanceof SessionGoalOperationError)) {
+      throw error;
+    }
+    return error;
+  }
+}
+
+/** Consume prepared receipts and current RAM ownership without yielding before reservation. */
 export function inspectGoalChatSendRetry({
   request,
   session,
@@ -310,20 +329,20 @@ export function inspectGoalChatSendRetry({
   context,
   durableClaimAccepted,
   assertCurrent,
-}: ChatSendPreAdmissionParams & { durableClaimAccepted?: boolean }) {
+  receipt,
+}: ChatSendPreAdmissionParams & {
+  durableClaimAccepted?: boolean;
+  receipt: Awaited<ReturnType<typeof prepareGoalChatSendRetry>>;
+}) {
   assertCurrent?.();
-  const { sessionKey, storePath, entry, clientRunId, pendingChatSendKey } = session;
+  const { clientRunId, pendingChatSendKey } = session;
   if (!request.goalOperation) {
     return { kind: "new" } as const;
   }
   try {
-    const receipt = lookupSessionGoalOperation({
-      sessionKey,
-      storePath,
-      agentId: session.agentId,
-      expectedSessionId: entry?.sessionId ?? session.backingSessionId ?? clientRunId,
-      operation: request.goalOperation,
-    });
+    if (receipt instanceof SessionGoalOperationError) {
+      throw receipt;
+    }
     if (receipt) {
       return { kind: "replay", receipt } as const;
     }
@@ -412,7 +431,10 @@ export async function runChatSendPreAdmission(
   }
 
   if (request.goalOperation) {
-    const retry = inspectGoalChatSendRetry(params);
+    const retry = inspectGoalChatSendRetry({
+      ...params,
+      receipt: await prepareGoalChatSendRetry(params),
+    });
     if (retry.kind === "settled") {
       return false;
     }
@@ -661,7 +683,11 @@ export async function runChatSendPreAdmission(
   }
   if (durableClaim.kind === "accepted") {
     if (request.goalOperation) {
-      const retry = inspectGoalChatSendRetry({ ...params, durableClaimAccepted: true });
+      const retry = inspectGoalChatSendRetry({
+        ...params,
+        durableClaimAccepted: true,
+        receipt: await prepareGoalChatSendRetry(params),
+      });
       if (retry.kind === "replay") {
         respond(true, { ...retry.receipt, replayed: true }, undefined, {
           cached: true,
