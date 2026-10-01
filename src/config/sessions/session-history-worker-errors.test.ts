@@ -25,7 +25,8 @@ const closeCapabilities = vi.hoisted(() => ({ explicitSqliteCloseReleasesNativeR
 vi.mock("../../infra/bun-sqlite-library.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../infra/bun-sqlite-library.js")>()),
   ensureSqliteLibrarySelected: () => ({ source: "runtime" }),
-  captureSqliteWorkerClosePolicy: () => closeCapabilities.explicitSqliteCloseReleasesNativeResources,
+  captureSqliteWorkerClosePolicy: () =>
+    closeCapabilities.explicitSqliteCloseReleasesNativeResources,
   getSqliteRuntimeCapabilities: () => ({ ...closeCapabilities, reason: "test policy" }),
 }));
 

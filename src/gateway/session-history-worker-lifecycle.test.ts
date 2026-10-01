@@ -28,6 +28,7 @@ import {
   prewarmSessionHistoryWorker,
   withSessionHistoryWorkerDatabase,
 } from "../config/sessions/session-transcript-worker-runtime.js";
+import { getSqliteRuntimeCapabilities } from "../infra/bun-sqlite-library.js";
 import { DEFAULT_WORKER_PENDING_BYTES } from "../infra/worker-task-capacity.js";
 import { KeyedAsyncQueue } from "../plugin-sdk/keyed-async-queue.js";
 import { createDeferredCore } from "../shared/deferred.js";
@@ -72,18 +73,10 @@ vi.mock("node:worker_threads", async (importOriginal) => {
     ...actual,
     Worker: class extends actual.Worker {
       constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+        const { explicitSqliteCloseReleasesNativeResources } = getSqliteRuntimeCapabilities();
         super(...args);
-        this.on("message", (message: unknown) => {
-          const packet = asOptionalRecord(message);
-          const reply = asOptionalRecord(packet?.value);
-          if (packet?.status === "ok" && typeof reply?.ok === "boolean") {
-            // Node guarantees direct close; Bun reuse follows this worker's own reply.
-            observed.idleCloseKeepsWorker.set(
-              this,
-              !process.versions.bun || (reply.ok && reply.sqliteCloseFinalizesStatements === true),
-            );
-          }
-        });
+        // Match the decision this generation inherits, before any later admission.
+        observed.idleCloseKeepsWorker.set(this, explicitSqliteCloseReleasesNativeResources);
       }
 
       override postMessage(...args: Parameters<Worker["postMessage"]>): void {

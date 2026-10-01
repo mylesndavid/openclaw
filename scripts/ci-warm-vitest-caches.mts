@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildChildEnv } from "./ci-run-node-test-shard.mts";
 import { createVitestCacheWarmGroups } from "./lib/ci-node-test-plan.mts";
-import { BUN_UI_TEST_ENV, resolveCiTestRuntimeSelections } from "./lib/ci-test-runtime.mts";
+import { BUN_VITEST_ENV, resolveCiTestRuntimeSelections } from "./lib/ci-test-runtime.mts";
 import { runManagedCommand } from "./lib/managed-child-process.mts";
 
 // Consumer entrypoints choose their own reusable cache leaves; the planner owns
@@ -113,7 +113,7 @@ try {
   // Vitest launcher directly instead of the CI runtime-admission policy.
   const bunEnv = buildChildEnv(
     { kind: "group", name: ui.shard_name, plan: ui },
-    { ...baseEnv, ...BUN_UI_TEST_ENV, NODE_OPTIONS: undefined },
+    { ...baseEnv, ...BUN_VITEST_ENV, NODE_OPTIONS: undefined },
     scratch,
     0,
     { runtime: "bun", cacheSlot: 0 },
