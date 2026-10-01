@@ -42,26 +42,82 @@ it("permits no-child Doctor work without an installation root while refusing wri
   expect(fs.existsSync(effect)).toBe(false);
 });
 
-it.each([false, true])(
-  "preserves Windows Doctor completion without admitting interrupted recovery (interrupted=%s)",
-  async (interrupted) => {
+it.each([
+  {
+    name: "normal completion",
+    interrupted: false,
+    delegated: false,
+    inputReleased: undefined,
+    running: false,
+    blocked: false,
+  },
+  {
+    name: "unknown interruption",
+    interrupted: true,
+    delegated: false,
+    inputReleased: undefined,
+    running: false,
+    blocked: true,
+  },
+  {
+    name: "withheld private grant",
+    interrupted: true,
+    delegated: true,
+    inputReleased: false,
+    running: false,
+    blocked: false,
+  },
+  {
+    name: "released private grant",
+    interrupted: true,
+    delegated: true,
+    inputReleased: true,
+    running: false,
+    blocked: true,
+  },
+  {
+    name: "standalone withheld input",
+    interrupted: true,
+    delegated: false,
+    inputReleased: false,
+    running: false,
+    blocked: true,
+  },
+  {
+    name: "running private child",
+    interrupted: true,
+    delegated: true,
+    inputReleased: false,
+    running: true,
+    blocked: true,
+  },
+])(
+  "preserves Windows Doctor writer custody for $name",
+  async ({ interrupted, delegated, inputReleased, running, blocked }) => {
     const root = directories.make("doctor-windows-custody-");
     const resultPath = path.join(root, "result.json");
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     vi.stubEnv(UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV, resultPath);
-    vi.spyOn(groups, "isChildProcessTreeAlive").mockReturnValue(false);
+    vi.spyOn(groups, "isChildProcessTreeAlive").mockReturnValue(running);
     vi.spyOn(nativeCustody, "createManagedCommandProcessCustody").mockImplementation(() => {
       throw new Error("Windows command groups have no extinction receipt");
     });
-    const parent = createUpdateDoctorProcessCustody("run", root, resultPath);
+    const parent = createUpdateDoctorProcessCustody(
+      "run",
+      root,
+      resultPath,
+      undefined,
+      delegated ? "delegated-doctor" : undefined,
+    );
     expect(await retainUpdateDoctorProcesses()).toBeUndefined();
     const settlement = await parent.settle({
       pid: 4242,
       code: interrupted ? null : 0,
       cleanup: interrupted ? "forced" : "normal",
       termination: interrupted ? "timeout" : "exit",
+      inputReleased,
     });
-    if (interrupted) {
+    if (blocked) {
       expect(settlement).toMatchObject({
         exitCode: 1,
         failureFacts: [
@@ -75,6 +131,6 @@ it.each([false, true])(
       expect(settlement).toBeUndefined();
     }
     parent.close();
-    expect(fs.existsSync(`${resultPath}.processes`)).toBe(interrupted);
+    expect(fs.existsSync(`${resultPath}.processes`)).toBe(blocked);
   },
 );

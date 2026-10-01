@@ -166,6 +166,7 @@ export function createUpdateDoctorProcessCustody(
   root: string,
   resultPath: string,
   namespace: UpdateDoctorProcessNamespace = { roots: [root] },
+  privateInputContract?: "delegated-doctor",
 ) {
   // This is the existing Doctor result IPC channel, not a new state store.
   const descriptor = {
@@ -198,11 +199,10 @@ export function createUpdateDoctorProcessCustody(
         mayRemove = true;
         return undefined;
       }
+      const rootStopped =
+        pid !== undefined && result?.cleanup !== "uncertain" && !isChildProcessTreeAlive({ pid });
       const rootExtinct =
-        pid !== undefined &&
-        result?.cleanup !== "uncertain" &&
-        !(process.platform === "win32" && result?.cleanup === "forced") &&
-        !isChildProcessTreeAlive({ pid });
+        rootStopped && !(process.platform === "win32" && result?.cleanup === "forced");
       let receipt: Receipt | undefined;
       try {
         const parsed = receiptSchema.safeParse(
@@ -211,10 +211,23 @@ export function createUpdateDoctorProcessCustody(
         if (
           parsed.success &&
           parsed.data.nonce === descriptor.nonce &&
-          parsed.data.runId === runId &&
-          (pid === undefined || parsed.data.pid === pid)
+          parsed.data.runId === runId
         ) {
-          receipt = parsed.data;
+          if (
+            privateInputContract === "delegated-doctor" &&
+            result?.inputReleased === false &&
+            rootStopped &&
+            parsed.data.pid === 0 &&
+            parsed.data.slots.length === 0
+          ) {
+            // No Doctor work started before its grant; this proves no writers,
+            // not extinction of an interrupted Windows Job's descendants.
+            mayRemove = true;
+            return undefined;
+          }
+          if (pid === undefined || parsed.data.pid === pid) {
+            receipt = parsed.data;
+          }
         }
       } catch {
         // A missing or partial receipt cannot prove that no native work started.

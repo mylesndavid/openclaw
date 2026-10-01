@@ -259,11 +259,13 @@ async function runCommandWithOutputEncoding(
   let waitingForSpawn = startupReady !== undefined;
   const startupCanceled = createDeferredCore<Exclude<CommandTerminationReason, "exit">>();
   const nodeChild = child.nodeChildProcess;
+  let inputReleased = options.beforeInput ? false : undefined;
   const failedProcess = (error: unknown, cleanup: SpawnResult["cleanup"] = "uncertain") => {
     const failure = recordCommandProcessFailure(error, {
       pid: nodeChild.pid,
       code: childExitState?.code ?? nodeChild.exitCode ?? null,
       cleanup,
+      inputReleased,
       termination:
         termination === "output-limit"
           ? "signal"
@@ -568,6 +570,8 @@ async function runCommandWithOutputEncoding(
         }
         throw new TypeError("Child input admission must complete synchronously");
       }
+      // A partial write or synchronous stream failure cannot claim withheld input.
+      inputReleased = true;
       nodeChild.stdin.end(input);
     } catch (cause) {
       inputAdmissionError = toErrorObject(cause, "Child input admission failed");

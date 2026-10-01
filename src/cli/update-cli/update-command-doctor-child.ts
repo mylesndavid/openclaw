@@ -108,6 +108,8 @@ export async function runUpdateDoctorProcess(
     runId: string;
     root: string;
     processNamespace?: UpdateDoctorProcessNamespace;
+    /** Only the delegated worker waits for the complete private grant before Doctor effects. */
+    privateInputContract?: "delegated-doctor";
     onProcessSettlement?: (step: UpdateStepResult) => void;
   },
   argv: string[],
@@ -124,6 +126,7 @@ export async function runUpdateDoctorProcess(
     context.root,
     resultPath,
     context.processNamespace,
+    context.privateInputContract,
   );
   try {
     let outcome: { result: SpawnResult } | { error: unknown };
@@ -202,6 +205,7 @@ export async function withUpdateDoctorChild<T>(
           {
             ...context,
             root: params.root,
+            privateInputContract: "delegated-doctor",
             processNamespace: {
               roots: [
                 executor.childKey,

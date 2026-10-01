@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { collectNestedErrorCandidates } from "@openclaw/normalization-core/error-coercion";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { hashConfigRaw } from "../../config/io.read-helpers.js";
@@ -290,7 +289,7 @@ it.each([
   },
 );
 
-it("retains before-input failure and refuses unproven Doctor custody without input", async () => {
+it("preserves before-input failure after proving the delegated grant was withheld", async () => {
   const runId = randomUUID();
   const runUtf8 = processRunner.runUtf8CommandWithTimeout;
   let childPid: number | undefined;
@@ -323,14 +322,49 @@ it("retains before-input failure and refuses unproven Doctor custody without inp
     await runPackageUpdateDoctor({ ...doctorOptions(runId, fence, guards), results: steps });
   });
   const failure = await work.catch((error: unknown) => error);
-  expect(hasCommandProcessCleanupError(failure)).toBe(true);
-  expect(collectNestedErrorCandidates(failure)).toContainEqual(
-    expect.objectContaining({
-      message: "injected before-input failure after live child binding",
-      cleanup: process.platform === "win32" ? "forced" : "cooperative",
-    }),
-  );
+  expect(hasCommandProcessCleanupError(failure)).toBe(false);
+  expect(failure).toMatchObject({
+    message: "injected before-input failure after live child binding",
+    cleanup: process.platform === "win32" ? "forced" : "cooperative",
+  });
+  expect(steps.filter((step) => step.name === "doctor process settlement")).toEqual([]);
   expect(childPid).toBeTypeOf("number");
+  if (childPid !== undefined) {
+    expect(await waitForPidToExit(childPid)).toBe(true);
+  }
+  expect(fs.existsSync(received)).toBe(false);
+  expect(fs.readFileSync(configPath, "utf8")).toBe("{}\n");
+});
+
+it("does not treat standalone input withholding as a delegated no-writer proof", async () => {
+  const original = new Error("Standalone input refused");
+  let pid: number | undefined;
+  const steps: UpdateStepResult[] = [];
+  const failure = await runUpdateDoctorProcess(
+    { runId: randomUUID(), root, onProcessSettlement: (step) => steps.push(step) },
+    [
+      process.execPath,
+      "-e",
+      "process.stdin.on('data', x => require('node:fs').appendFileSync(process.argv[1], x)); process.stdin.resume();",
+      received,
+    ],
+    {
+      cwd: root,
+      input: "must not be delivered",
+      timeoutMs: 5_000,
+      env: {
+        ...env,
+        [UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV]: path.join(root, "standalone-result.json"),
+      },
+      beforeInput: (spawnedPid) => {
+        pid = spawnedPid;
+        throw original;
+      },
+    },
+  ).catch((error: unknown) => error);
+  assert(pid);
+  expect(hasCommandProcessCleanupError(failure)).toBe(true);
+  expect(failure).toMatchObject({ cause: original });
   expect(steps).toContainEqual(
     expect.objectContaining({
       name: "doctor process settlement",
@@ -338,14 +372,12 @@ it("retains before-input failure and refuses unproven Doctor custody without inp
       failureFacts: [
         expect.objectContaining({
           code: "doctor-processes-unsettled",
-          message: expect.stringContaining(String(childPid)),
+          message: expect.stringContaining(String(pid)),
         }),
       ],
     }),
   );
-  if (childPid !== undefined) {
-    expect(await waitForPidToExit(childPid)).toBe(true);
-  }
+  expect(await waitForPidToExit(pid)).toBe(true);
   expect(fs.existsSync(received)).toBe(false);
   expect(fs.readFileSync(configPath, "utf8")).toBe("{}\n");
 });

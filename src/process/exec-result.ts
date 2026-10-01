@@ -50,7 +50,13 @@ export type SpawnResult = {
   outputErrorStream?: "stdout" | "stderr";
 };
 
-export type CommandProcessOutcome = Pick<SpawnResult, "pid" | "code" | "cleanup" | "termination">;
+export type CommandProcessOutcome = Pick<
+  SpawnResult,
+  "pid" | "code" | "cleanup" | "termination"
+> & {
+  /** False only while a managed beforeInput callback has withheld every input byte. */
+  inputReleased?: boolean;
+};
 const commandFailureOutcome = Symbol.for("openclaw.command-process-outcome");
 
 /** Lifecycle facts stay private; callers retain the original error and its diagnostics. */
@@ -78,6 +84,7 @@ export function readCommandProcessFailure(error: unknown): CommandProcessOutcome
             Number.isSafeInteger(outcome.pid) &&
             outcome.pid > 0)) &&
         (outcome.code === null || typeof outcome.code === "number") &&
+        (outcome.inputReleased === undefined || typeof outcome.inputReleased === "boolean") &&
         (outcome.cleanup === undefined ||
           outcome.cleanup === "normal" ||
           outcome.cleanup === "cooperative" ||
@@ -93,6 +100,7 @@ export function readCommandProcessFailure(error: unknown): CommandProcessOutcome
           code: outcome.code,
           cleanup: outcome.cleanup,
           termination: outcome.termination,
+          inputReleased: outcome.inputReleased,
         };
       }
     } catch {
