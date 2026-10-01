@@ -29,7 +29,6 @@ export function createPluginServiceScheduler(
       }
     };
     const close = (): Promise<void> | undefined => {
-      beginClose();
       const pending = [owner.close(), ...Array.from(children, (child) => child.close())].filter(
         (completion) => completion !== undefined,
       );

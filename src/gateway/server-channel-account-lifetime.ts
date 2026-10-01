@@ -97,12 +97,8 @@ export async function runChannelAccountStop(params: {
         const cleanup = Promise.resolve().then(() =>
           run({ ...context, setStatus: params.setStatus }),
         );
-        const settled = await Promise.allSettled([cleanup, context.scheduler.stop()]);
-        for (const result of settled) {
-          if (result.status === "rejected") {
-            throw result.reason;
-          }
-        }
+        const scheduled = context.scheduler.stop();
+        await cleanup.finally(() => scheduled);
       },
       params.lease,
     );

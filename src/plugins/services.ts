@@ -273,40 +273,17 @@ async function startPreparedPluginServices({
         const stopRegistry = record
           ? getPluginRecordRegistry(entry.registry, record)
           : entry.registry;
-        let cleanup:
-          | { status: "fulfilled"; value: unknown }
-          | { status: "rejected"; reason: unknown };
-        try {
-          cleanup = {
-            status: "fulfilled",
-            value: withPluginHttpRouteRegistry(stopRegistry, () => entry.stop?.(), entry.lease),
-          };
-        } catch (error) {
-          cleanup = { status: "rejected", reason: error };
-        }
-        // Stop can abort transport work or flush ingress needed by a scheduled callback.
         const scheduled = entry.scheduling.close();
-        if (!scheduled) {
-          // An idle scheduler must not add promise turns to the hook's observer deadline.
-          if (cleanup.status === "rejected") {
-            throw cleanup.reason;
-          }
-          return cleanup.value;
-        }
-        return Promise.allSettled([
-          cleanup.status === "fulfilled" ? cleanup.value : Promise.reject(cleanup.reason),
-          scheduled,
-        ]).then((settled) => {
-          const errors = settled.flatMap((result) =>
-            result.status === "rejected" ? [result.reason] : [],
-          );
-          if (errors.length === 1) {
-            throw errors[0];
-          }
-          if (errors.length > 1) {
-            throw new AggregateError(errors, "Plugin service retirement failed");
-          }
-        });
+        const cleanup = () =>
+          withPluginHttpRouteRegistry(stopRegistry, () => entry.stop?.(), entry.lease);
+        // Cleanup releases transports needed by scheduled callbacks, so invoke it before joining.
+        // The scheduler records callback failures; its join only observes physical settlement.
+        // An idle scope must preserve the hook's raw result for zero-budget deadlines.
+        return scheduled
+          ? Promise.resolve()
+              .then(cleanup)
+              .finally(() => scheduled)
+          : cleanup();
       };
       const cleanup = () => {
         if (!entry.stopping) {
