@@ -23,15 +23,15 @@ type SharedAuthProfileDatabase = Pick<OpenClawStateKyselyDatabase, "config_machi
 
 // Auth profiles store one JSON blob for secrets and one JSON blob for runtime
 // state. SQLite owns durability/transactions; JSON shape owns compatibility.
-export const PRIMARY_ROW_KEY = "primary";
+const PRIMARY_ROW_KEY = "primary";
 // Shared-state auth payloads live in config_machine_state; the keys are listed
 // in STATE_SECRET_CONFIG_STATE_KEY_PREFIXES so git backups never carry them.
-export const SHARED_STORE_STATE_KEY = "authProfiles.store";
-export const SHARED_STATE_STATE_KEY = "authProfiles.state";
+const SHARED_STORE_STATE_KEY = "authProfiles.store";
+const SHARED_STATE_STATE_KEY = "authProfiles.state";
 export const SHARED_AUTH_STORE_STATE_KEY = "auth.sharedStore";
 
 // Callers own transactions; opening another here would nest.
-export function readSharedAuthKvCell(db: DatabaseSync, stateKey: string): string | undefined {
+function readSharedAuthKvCell(db: DatabaseSync, stateKey: string): string | undefined {
   const row = executeSqliteQueryTakeFirstSync(
     db,
     getSharedAuthProfileKysely(db)
@@ -42,7 +42,7 @@ export function readSharedAuthKvCell(db: DatabaseSync, stateKey: string): string
   return row?.value_json;
 }
 
-export function getAgentAuthProfileKysely(db: DatabaseSync) {
+function getAgentAuthProfileKysely(db: DatabaseSync) {
   return getNodeSqliteKysely<AgentAuthProfileDatabase>(db);
 }
 
