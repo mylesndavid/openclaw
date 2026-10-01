@@ -742,7 +742,7 @@ async function inspectOrMigrateTarget(params: {
     (!retainedImport || !retainedIndexPath) &&
     params.mode !== "inspect" &&
     params.mode !== "compact" &&
-    (issues.length === 0 || retainedImport)
+    (issues.every(({ code }) => code === "retained_plugin_source_index_rebuilt") || retainedImport)
   ) {
     const archiveSources = params.historicalArchives?.get(
       canonicalMigrationFilePath(params.target.storePath),

@@ -150,7 +150,8 @@ describe("deferred plugin session receipt retirement", () => {
       expect(issues).toContainEqual(
         expect.objectContaining({ code: "retained_plugin_source_index_rebuilt" }),
       );
-      expect(rebound.totals.importedEntries).toBe(0);
+      expect(rebound.totals.importedEntries).toBe(1);
+      expect(rebound.totals.importedTranscriptEvents).toBe(1);
       expect(readDeferredPluginSessionImport(receiptParams)).toBeUndefined();
       expect(loadExactSessionEntry({ ...scope, sessionKey: "agent:main:kept" })?.entry.label).toBe(
         "current SQLite metadata",
@@ -159,10 +160,12 @@ describe("deferred plugin session receipt retirement", () => {
         originalEvents,
       );
 
-      expect(fs.readFileSync(laterTranscript, "utf8")).toBe(`${JSON.stringify(laterEvent)}\n`);
+      expect(loadTranscriptEventsSync({ ...scope, sessionId: "later-history" })).toEqual([
+        laterEvent,
+      ]);
       const later = await run();
-      expect(later.totals.importedEntries).toBe(1);
-      expect(later.totals.importedTranscriptEvents).toBe(1);
+      expect(later.totals.importedEntries).toBe(0);
+      expect(later.totals.importedTranscriptEvents).toBe(0);
       expect(loadTranscriptEventsSync({ ...scope, sessionId: "later-history" })).toEqual([
         laterEvent,
       ]);

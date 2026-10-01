@@ -166,10 +166,8 @@ function collectArchivedSources(
   const archives: ArchivedSessionSources = new Map();
   for (const manifestPath of listSessionSqliteMigrationManifestPaths(env)) {
     const manifest = readSessionSqliteMigrationManifest(manifestPath);
-    if (!manifest) {
-      continue;
-    }
-    for (const candidate of filterRestoreManifestTargets(manifest, [target])) {
+    const targets = manifest ? filterRestoreManifestTargets(manifest, [target]) : [];
+    for (const candidate of targets) {
       for (const move of candidate.plannedMoves) {
         if (move.artifact) {
           const paths = archives.get(move.sourcePath) ?? [];
@@ -239,8 +237,7 @@ export function resolveVerifiedSessionSource(
         .get(source.path)
         ?.find(
           ({ identity, path: archivePath }) =>
-            identity.sha256 === source.identity.sha256 &&
-            identity.size === source.identity.size &&
+            sameSourceContent(identity, source.identity) &&
             statMigrationPath(archivePath) &&
             sameSourceContent(readMigrationArtifactIdentity(archivePath), source.identity),
         )?.path;
