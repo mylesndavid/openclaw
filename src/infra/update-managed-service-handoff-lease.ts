@@ -301,6 +301,7 @@ export function createManagedHandoffLeaseStore(
     storedCurrent,
     childAliases,
     canRelease,
+    row,
     handle,
     updateRow,
     deleteRow,

@@ -19,6 +19,7 @@ import {
   type ManagedHandoffOriginalAdmission,
 } from "./update-managed-service-handoff-original-owner.js";
 import type { createManagedHandoffProcessIdentityReader } from "./update-managed-service-handoff-process.js";
+import type { createManagedHandoffLeaseRows } from "./update-managed-service-handoff-rows.js";
 import { parseManagedHandoffLeasePayload } from "./update-managed-service-handoff-schema.js";
 
 type CancellationDependencies = {
@@ -30,6 +31,7 @@ type CancellationDependencies = {
   storedCurrent: (lease: ManagedHandoffParent, db: HandoffDatabase) => boolean;
   childAliases: (key: string, db: HandoffDatabase) => string[];
   canRelease: (lease: ManagedHandoffLease) => boolean;
+  row: ReturnType<typeof createManagedHandoffLeaseRows>["row"];
   handle: (root: string, value: LeaseRow) => ManagedHandoffLease;
   updateRow: (
     db: HandoffDatabase,
@@ -51,6 +53,7 @@ export function createManagedHandoffCancellation(deps: CancellationDependencies)
     storedCurrent,
     childAliases,
     canRelease,
+    row,
     handle,
     updateRow,
     deleteRow,
@@ -127,26 +130,20 @@ export function createManagedHandoffCancellation(deps: CancellationDependencies)
       if (!aliases.includes(child.key)) {
         return false;
       }
-      const peers = executeSqliteQuerySync(
-        db,
-        leaseQueries(db)
-          .selectFrom("managed_update_handoffs")
-          .select(["install_root", "owner", "payload_json", "updated_at"])
-          .where("install_root", "in", aliases),
-      ).rows;
-      return (
-        peers.length === aliases.length &&
-        peers.every((entry) => {
-          const peer = handle(entry.install_root, entry);
-          return (
-            peer.version === 2 &&
-            peer.owner === child.owner &&
-            isDeepStrictEqual(peer.action, child.action) &&
-            isDeepStrictEqual(peer.helper, child.helper) &&
-            isDeepStrictEqual(peer.executor, child.executor)
-          );
-        })
-      );
+      return aliases.every((key) => {
+        const entry = row(db, key);
+        if (!entry) {
+          return false;
+        }
+        const peer = handle(key, entry);
+        return (
+          peer.version === 2 &&
+          peer.owner === child.owner &&
+          isDeepStrictEqual(peer.action, child.action) &&
+          isDeepStrictEqual(peer.helper, child.helper) &&
+          isDeepStrictEqual(peer.executor, child.executor)
+        );
+      });
     };
     const transitioned = withDatabase(true, (db) =>
       transact(db, () => {
