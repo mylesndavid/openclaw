@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { waitForDead } from "../../test/helpers/process-wait.js";
+import { isProcessAlive, waitForDead } from "../../test/helpers/process-wait.js";
+import { withinTest } from "../../test/helpers/promise.js";
 import { runNodeScript } from "../../test/helpers/run-node-script.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -11,6 +13,22 @@ import { seedInstalledPluginIndex } from "../plugins/test-helpers/installed-plug
 
 const execFileAsync = promisify(execFile);
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+// The timed-out CLI owns these transports; their killed parents cannot relay close events.
+async function waitForTransportExit(pids: number[], signal: AbortSignal): Promise<void> {
+  await withinTest(
+    (async () => {
+      while (pids.some(isProcessAlive)) {
+        await delay(5, undefined, { signal });
+      }
+    })(),
+    signal,
+  ).catch((error: unknown) => {
+    throw new Error(`process still alive: ${pids.filter(isProcessAlive).join(", ")}`, {
+      cause: error,
+    });
+  });
+}
 
 async function writeHarnessPlugin(stateDir: string): Promise<void> {
   const pluginDir = path.join(stateDir, "extensions", "exec-proof");
@@ -171,7 +189,7 @@ function buildCliSource(args: string[]): string {
 describe("agent exec built runtime", () => {
   it.skipIf(process.platform === "win32")(
     "reclaims CLI transport descendants when the run times out",
-    async () => {
+    async ({ signal }) => {
       const root = tempDirs.make("openclaw-agent-exec-auth-timeout-");
       const binDir = path.join(root, "bin");
       const processPath = path.join(root, "processes.jsonl");
@@ -255,8 +273,9 @@ if (process.argv[2] === "--version") {
         expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, status: "timeout" });
         const receipts = await readProcesses();
         expect(receipts.map(({ phase }) => phase)).toContain("agent");
-        await Promise.all(
-          receipts.flatMap(({ pids }) => pids.map((pid) => waitForDead(pid, 5_000))),
+        await waitForTransportExit(
+          receipts.flatMap(({ pids }) => pids),
+          signal,
         );
       } finally {
         // Assert extinction before asking any leaked fixture children to exit.
