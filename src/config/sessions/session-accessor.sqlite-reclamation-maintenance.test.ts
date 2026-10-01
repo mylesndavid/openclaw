@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setImmediate } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
@@ -37,7 +38,11 @@ vi.mock("node:worker_threads", async (importOriginal) => {
           selected
             ? {
                 ...options,
-                execArgv: [...(options?.execArgv ?? []), "--require", nativePreload.path],
+                execArgv: [
+                  ...(options?.execArgv ?? []),
+                  "--import",
+                  pathToFileURL(nativePreload.path).href,
+                ],
                 workerData: { ...options?.workerData, fixtureNativeGate: nativePreload.gate },
               }
             : options,
@@ -92,32 +97,39 @@ describe.skipIf(Boolean(process.versions.bun))(
           materializedPlans: [],
         });
       const arm = path.join(root, "armed");
-      const capturedTimer = path.join(root, "captured-timer");
+      const capturedMaintenance = path.join(root, "captured-maintenance");
       const receipt = path.join(root, "native-events.json");
-      const preload = path.join(root, "deferred-maintenance.cjs");
+      const preload = path.join(root, "deferred-maintenance.mjs");
       writeFileSync(
         preload,
         `
-      const fs = require('node:fs');
-      const { DatabaseSync } = require('node:sqlite');
-      const { parentPort, workerData } = require('node:worker_threads');
+      import fs from 'node:fs';
+      import { DatabaseSync } from 'node:sqlite';
+      import { parentPort, workerData } from 'node:worker_threads';
+      const { observeSqliteWalPeriodicWork } = await import(${JSON.stringify(new URL("../../infra/sqlite-wal-scheduler.test-support.ts", import.meta.url).href)});
       const target = ${JSON.stringify(realpathSync(source.path))};
       const phase = ${JSON.stringify(phase)};
       const unsafe = ${JSON.stringify(unsafe)};
       const failRollback = ${JSON.stringify(cleanup !== "rollback")};
       const events = [];
-      let lastDatabase, periodic, triggered = false, vacuumDatabase, failed;
+      let lastDatabase, triggered = false, vacuumDatabase, failed;
       const selected = (db) => {
         const location = db.location();
         return location && fs.realpathSync(location) === target;
       };
+      const scheduled = observeSqliteWalPeriodicWork(() => {
+        if (!lastDatabase || !selected(lastDatabase)) return false;
+        fs.writeFileSync(${JSON.stringify(capturedMaintenance)}, 'captured');
+        return true;
+      });
       const record = (step, db) => {
         events.push({ step, isOpen: db.isOpen, isTransaction: db.isTransaction });
         fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify(events));
       };
       const tick = () => {
         if (triggered) return;
-        if (!periodic) throw new Error('The real source maintenance timer was not captured');
+        const periodic = scheduled.periodic;
+        scheduled.restore();
         triggered = true;
         periodic();
       };
@@ -157,15 +169,6 @@ describe.skipIf(Boolean(process.versions.bun))(
         }
         return close.call(this);
       };
-      const interval = globalThis.setInterval;
-      globalThis.setInterval = function(callback, delay, ...args) {
-        const timer = interval(callback, delay, ...args);
-        if (delay === 30 * 60 * 1000 && lastDatabase && selected(lastDatabase)) {
-          periodic = () => callback(...args);
-          fs.writeFileSync(${JSON.stringify(capturedTimer)}, 'captured');
-        }
-        return timer;
-      };
       if (unsafe) process.on('uncaughtExceptionMonitor', () => {
         parentPort.postMessage({ type: 'fixture:native-exit-pending' });
         Atomics.wait(new Int32Array(workerData.fixtureNativeGate), 0, 0);
@@ -190,7 +193,7 @@ describe.skipIf(Boolean(process.versions.bun))(
       if (!worker) {
         throw new Error("The actual reclamation Worker did not receive its native fixture");
       }
-      expect(existsSync(capturedTimer)).toBe(true);
+      expect(existsSync(capturedMaintenance)).toBe(true);
       const raw = new DatabaseSync(source.path);
       raw.exec(
         "INSERT INTO cache_entries(scope,key,value_json,blob,updated_at) VALUES ('maintenance-fixture','free-pages','{}',randomblob(4194304),1); DELETE FROM cache_entries WHERE scope='maintenance-fixture';",
