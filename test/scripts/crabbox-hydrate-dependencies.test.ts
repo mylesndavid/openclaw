@@ -47,6 +47,45 @@ function write(root: string, relative: string, contents: string, mode?: number) 
 }
 
 describe.skipIf(process.platform === "win32")("Crabbox dependency hydration", () => {
+  it.each(["true", "false", "invalid"])(
+    "applies frozen policy before pnpm bootstrap (%s)",
+    (frozen) => {
+      const root = tempDirs.make("openclaw-frozen-bootstrap-");
+      const bin = path.join(root, "bin");
+      mkdirSync(bin);
+      symlinkSync(resolveTestNodeExecPath(), path.join(bin, "node"));
+      const lock = path.join(root, "pnpm-lock.yaml");
+      const calls = path.join(root, "pnpm-calls");
+      writeFileSync(lock, "original\n");
+      write(
+        bin,
+        "pnpm",
+        `#!/bin/bash
+printf '%s\\n' "$*" >> "$PNPM_CALLS"
+if [ "\${PNPM_CONFIG_FROZEN_LOCKFILE:-}" != true ]; then
+  printf 'rewritten\\n' > "$PNPM_LOCK"
+fi
+`,
+        0o755,
+      );
+      const result = spawnSync("bash", [".github/actions/setup-node-env/install-dependencies.sh"], {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          NODE_BIN: bin,
+          FROZEN_LOCKFILE: frozen,
+          DEPENDENCY_CACHE: "false",
+          DEPENDENCY_CACHE_HIT: "false",
+          PNPM_CALLS: calls,
+          PNPM_LOCK: lock,
+        },
+      });
+      expect(result.status, result.stderr).toBe(frozen === "invalid" ? 2 : 0);
+      expect(readFileSync(lock, "utf8")).toBe(frozen === "false" ? "rewritten\n" : "original\n");
+      expect(existsSync(calls)).toBe(frozen !== "invalid");
+    },
+  );
+
   it.each([
     ["default hydration", "fresh"],
     ["shared setup action", "fresh"],

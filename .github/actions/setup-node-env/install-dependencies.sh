@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-export PATH="$NODE_BIN:$PATH"
-which node
-node -v
-pnpm -v
 case "$FROZEN_LOCKFILE" in
-  true) LOCKFILE_FLAG="--frozen-lockfile" ;;
-  false) LOCKFILE_FLAG="" ;;
+  true) export PNPM_CONFIG_FROZEN_LOCKFILE=true ;;
+  false) ;;
   *)
     echo "::error::Invalid frozen-lockfile input: '$FROZEN_LOCKFILE' (expected true or false)"
     exit 2
     ;;
 esac
+export PATH="$NODE_BIN:$PATH"
+which node
+node -v
+pnpm -v
 
 install_args=(
   install
@@ -29,9 +29,6 @@ if [ "$DEPENDENCY_CACHE" = "true" ] || {
   # inodes. Avoid copying the restored store on Linux filesystems without clones;
   # exact archives also preserve these links. Pnpm falls back to copies as needed.
   export PNPM_CONFIG_PACKAGE_IMPORT_METHOD=hardlink
-fi
-if [ -n "$LOCKFILE_FLAG" ]; then
-  install_args+=("$LOCKFILE_FLAG")
 fi
 # Native pnpm reads these env settings; config flags also support older checkouts.
 append_pnpm_option_arg() {
