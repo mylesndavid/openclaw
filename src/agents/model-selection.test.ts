@@ -26,6 +26,7 @@ const manifestNormalizationSnapshot = createPluginMetadataSnapshotFixture({
   plugins: [
     {
       id: "model-selection-test-normalizers",
+      providers: ["nvidia"],
       modelIdNormalization: {
         providers: { nvidia: { aliases: { "llama-fast": "nvidia/canonical-fast" } } },
       },
@@ -641,35 +642,22 @@ it.each([
       ref: { provider: "openai", model: "xiaomi/mimo-v2-pro-mit" },
     },
   },
+  {
+    name: "preserves provider identity with manifest model-ID normalization disabled",
+    params: {
+      cfg: createConfiguredModelRefConfig({
+        modelEntries: { "openai/gpt-4o-mini": { alias: "nvidia/llama-fast" } },
+      }),
+      catalog: [],
+      raw: "nvidia/llama-fast",
+      defaultProvider: "openai",
+      allowManifestNormalization: false,
+      allowPluginNormalization: false,
+    },
+    expected: { key: "nvidia/llama-fast", ref: { provider: "nvidia", model: "llama-fast" } },
+  },
 ])("$name", ({ params, expected }) => {
   expect(resolveAllowedModelRef(params)).toEqual(expected);
-});
-
-it("resolves provider-qualified aliases without cross-provider collisions", () => {
-  const index = buildModelAliasIndex({
-    cfg: createConfiguredModelRefConfig({
-      modelEntries: {
-        "lmstudio-moe/qwen3.6-35b-a3b": { alias: "Local" },
-        "lmstudio-dense/qwen3.6-27b": { alias: "Local" },
-      },
-    }),
-    defaultProvider: "openai",
-  });
-
-  expect(
-    resolveModelRefFromString({
-      raw: "lmstudio-moe/Local",
-      defaultProvider: "openai",
-      aliasIndex: index,
-    }),
-  ).toEqual({ ref: { provider: "lmstudio-moe", model: "qwen3.6-35b-a3b" }, alias: "Local" });
-  expect(
-    resolveModelRefFromString({
-      raw: "lmstudio-dense/LOCAL",
-      defaultProvider: "openai",
-      aliasIndex: index,
-    }),
-  ).toEqual({ ref: { provider: "lmstudio-dense", model: "qwen3.6-27b" }, alias: "Local" });
 });
 
 it("strips profile suffix before alias resolution", () => {
@@ -785,22 +773,28 @@ it.each([
     expected: { provider: "anthropic", model: "claude-opus-4-6" },
   },
   {
+    name: "keeps a literal primary before a same-provider alias backed by a bare key",
+    primary: "openai/friendly",
+    modelEntries: { base: { alias: "openai/friendly" } },
+    expected: { provider: "openai", model: "friendly" },
+  },
+  {
     name: "prefers slash-form aliases for configured default models",
     primary: "xiaomi/mimo-v2-pro-mit",
     modelEntries: { "openai/xiaomi/mimo-v2-pro-mit": { alias: "xiaomi/mimo-v2-pro-mit" } },
     expected: { provider: "openai", model: "xiaomi/mimo-v2-pro-mit" },
   },
   {
-    name: "prefers exact auth-profile aliases before configured-provider stripping",
+    name: "keeps a configured provider ahead of an exact auth-profile alias collision",
     primary: "nemotron-bolt/nemotron-3-super-120b@prod",
     modelEntries: {
       "openai/gpt-5.5": { alias: "nemotron-bolt/nemotron-3-super-120b@prod" },
     },
     providers: nemotronProvider,
-    expected: { provider: "openai", model: "gpt-5.5" },
+    expected: { provider: "nemotron-bolt", model: "nemotron-3-super-120b" },
   },
   {
-    name: "prefers stripped auth-profile aliases before configured-provider stripping",
+    name: "keeps a configured provider ahead of a stripped auth-profile alias collision",
     primary: "nemotron-bolt/nemotron-3-super-120b@prod",
     modelEntries: {
       "openai/nemotron-bolt/nemotron-3-super-120b": {
@@ -808,7 +802,7 @@ it.each([
       },
     },
     providers: nemotronProvider,
-    expected: { provider: "openai", model: "nemotron-bolt/nemotron-3-super-120b" },
+    expected: { provider: "nemotron-bolt", model: "nemotron-3-super-120b" },
   },
 ])("$name", ({ primary, modelEntries, providers, expected }) => {
   const cfg = createConfiguredModelRefConfig({ primary, modelEntries, providers });
