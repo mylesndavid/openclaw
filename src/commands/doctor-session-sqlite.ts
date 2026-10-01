@@ -156,6 +156,7 @@ export async function runDoctorSessionSqlite(
       })
       .map(({ pluginId }) => pluginId);
     if (disabled.length > 0) {
+      authority?.assertCurrent();
       pendingPlugins =
         (await recordDeferredPluginMigrations({
           env,

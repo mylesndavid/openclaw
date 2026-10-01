@@ -112,7 +112,14 @@ export function retireDeferredPluginSessionImport(
         ) {
           return;
         }
-        readDeferredPluginSessionImport({ ...params, database: db });
+        // Diagnostic callbacks and cached verification cannot authorize retirement.
+        readDeferredPluginSessionImport({
+          cfg: params.cfg,
+          env: params.env,
+          target: params.target,
+          sqlitePath: params.sqlitePath,
+          database: db,
+        });
         markLegacyMigrationSourceRemovedInDatabase(db, receipt.sourceKey);
       }),
     { env: params.env },
@@ -187,13 +194,13 @@ export async function prepareRetainedSessionImport(
   if (!isSqliteStore) {
     try {
       if (params.mode === "import" || params.mode === "recover") {
-        retireDeferredPluginSessionImport(sourceVerification);
         if (await rebuildDeferredPluginSessionSourceIndex(sourceVerification)) {
           issues.push({
             code: "retained_plugin_source_index_rebuilt",
             message: `Rebuilt the verified source index and database binding from the deferred import receipt: ${params.target.storePath}. Canonical SQLite sessions were not replayed.`,
           });
         }
+        retireDeferredPluginSessionImport(sourceVerification);
       }
       retainedImport = readDeferredPluginSessionImport(sourceVerification);
     } catch (error) {
