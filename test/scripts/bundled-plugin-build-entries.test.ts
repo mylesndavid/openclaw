@@ -384,6 +384,7 @@ describe("bundled plugin build entries", () => {
     expect(entries["extensions/whatsapp/index"]).toBe("extensions/whatsapp/index.ts");
     expect(entries["extensions/whatsapp/setup-entry"]).toBe("extensions/whatsapp/setup-entry.ts");
     expect(entries["extensions/clawrouter/index"]).toBe("extensions/clawrouter/index.ts");
+    expect(entries["extensions/gravity/index"]).toBe("extensions/gravity/index.ts");
     expect(entryKeys.findIndex((entry) => entry.startsWith("extensions/clickclack/"))).toBeLessThan(
       entryKeys.findIndex((entry) => entry.startsWith("extensions/slack/")),
     );

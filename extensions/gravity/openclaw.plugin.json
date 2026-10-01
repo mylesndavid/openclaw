@@ -1,0 +1,106 @@
+{
+  "id": "gravity",
+  "name": "Free (Ad-supported)",
+  "description": "Free AI from Gravity with account sign-in and built-in Gravity Index product_service_search. No ad-delivery runtime is included.",
+  "categories": [
+    "models"
+  ],
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "providers": [
+    "gravity"
+  ],
+  "modelCatalog": {
+    "discovery": {
+      "gravity": "runtime"
+    }
+  },
+  "contracts": {
+    "usageProviders": [
+      "gravity"
+    ],
+    "tools": [
+      "product_service_search"
+    ]
+  },
+  "toolMetadata": {
+    "product_service_search": {
+      "replaySafe": true,
+      "sideEffecting": false,
+      "authSignals": [
+        {
+          "provider": "gravity"
+        }
+      ]
+    }
+  },
+  "setup": {
+    "providers": [
+      {
+        "id": "gravity",
+        "envVars": [
+          "GRAVITY_API_KEY"
+        ]
+      }
+    ]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "gravity",
+      "method": "device-code",
+      "choiceId": "gravity-free",
+      "choiceLabel": "Free (Ad-supported)",
+      "choiceHint": "Free AI \u00b7 sign in with Gravity \u00b7 includes product & service search",
+      "appGuidedAuth": "device-code",
+      "credentialOnly": true,
+      "channelLogin": {
+        "aliases": [
+          "gravity",
+          "free"
+        ]
+      },
+      "groupId": "gravity",
+      "groupLabel": "Free (Ad-supported)",
+      "groupHint": "Free AI \u00b7 includes Gravity Index product and service search",
+      "website": "https://openclaw.trygravity.ai",
+      "docsUrl": "https://openclaw.trygravity.ai",
+      "assistantPriority": -60,
+      "onboardingFeatured": true
+    },
+    {
+      "provider": "gravity",
+      "method": "api-key",
+      "choiceId": "gravity-api-key",
+      "choiceLabel": "Gravity API key",
+      "choiceHint": "Use an existing Gravity API key",
+      "groupId": "gravity",
+      "groupLabel": "Free (Ad-supported)",
+      "groupHint": "Free AI \u00b7 includes Gravity Index product and service search",
+      "optionKey": "gravityApiKey",
+      "cliFlag": "--gravity-api-key",
+      "cliOption": "--gravity-api-key <key>",
+      "cliDescription": "Gravity API key",
+      "assistantVisibility": "manual-only"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "accountUrl": {
+        "type": "string",
+        "description": "Gravity device-auth account URL. Default https://openclaw.trygravity.ai; also honors GRAVITY_ACCOUNT_URL. For local auth use http://127.0.0.1:3100. Inference is configured separately at models.providers.gravity.baseUrl."
+      }
+    }
+  },
+  "providerEndpoints": [
+    {
+      "endpointClass": "custom",
+      "baseUrls": [
+        "https://llm.trygravity.ai/v1"
+      ]
+    }
+  ]
+}
