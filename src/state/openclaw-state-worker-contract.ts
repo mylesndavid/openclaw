@@ -63,7 +63,6 @@ import type { OpenClawAgentDatabaseWorkerLeaseReceipt } from "./openclaw-agent-d
 import type { OpenClawStateLeaseLifecycleOperations } from "./openclaw-state-lease-context.js";
 import type { RegisteredStateWorkerOperations } from "./openclaw-state-worker-registry.js";
 import type { UserPreferenceWorkerOperations } from "./user-preferences.types.js";
-import type { UserProfileWorkerOperations } from "./user-profiles.worker.js";
 
 export type OpenClawStateWorkerOpenPreparation = { type: "deviceIdentity"; identityKey: string };
 
@@ -79,7 +78,6 @@ export type OpenClawStateWorkerOperations = RegisteredStateWorkerOperations &
   OperatorApprovalWorkerOperations &
   PluginStateWorkerOperations &
   UserPreferenceWorkerOperations &
-  UserProfileWorkerOperations &
   CronStateWorkerOperations &
   TranscriptReadOperations &
   OpenClawStateLeaseLifecycleOperations & {

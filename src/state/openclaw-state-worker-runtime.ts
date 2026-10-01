@@ -64,7 +64,6 @@ import type {
 } from "./openclaw-state-worker-contract.js";
 import { stateWorkerRegistry } from "./openclaw-state-worker-registry.js";
 import { executeUserPreferenceCommand } from "./user-preferences.worker.js";
-import { executeUserProfileCommand, isUserProfileCommand } from "./user-profiles.worker.js";
 
 const log = createSubsystemLogger("state/worker");
 
@@ -130,12 +129,6 @@ export function executeSharedStateCommand(
   }
   if (command.type === "userPreferences.read" || command.type === "userPreferences.write") {
     return executeUserPreferenceCommand(command, {
-      database: open(),
-      ...stateOptions(),
-    });
-  }
-  if (isUserProfileCommand(command)) {
-    return executeUserProfileCommand(command, {
       database: open(),
       ...stateOptions(),
     });
