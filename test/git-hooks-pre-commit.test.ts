@@ -677,20 +677,38 @@ if (process.argv.some(arg => arg.startsWith("--stdin-filepath="))) process.stdou
     expect(existsSync(path.join(dir, "node_modules"))).toBe(false);
   });
 
-  it.each(["NAPI_RS_NATIVE_LIBRARY_PATH", "NAPI_RS_FORCE_WASI", "NAPI_RS_WASI_FLAVOR"])(
-    "rejects the platform override %s before formatting",
-    (key) => {
-      const { dir, env } = toolingFixture();
-      const result = runFailure(
-        dir,
-        "/bin/bash",
-        ["scripts/pre-commit/run-node-tool.sh", "oxfmt", "--write", "a.ts"],
-        { ...env, [key]: "override" },
-      );
-      expect(result.stderr).toContain("Cannot qualify an overridden formatter platform binding");
-      expect(existsSync(path.join(dir, "formatter-call.json"))).toBe(false);
-    },
-  );
+  it.each(["false", "0", "override"])("allows inactive NAPI_RS_FORCE_WASI=%s", (value) => {
+    const { dir, owner, env } = toolingFixture();
+    const args = ["--write", "space name.ts"];
+    run(dir, "/bin/bash", ["scripts/pre-commit/run-node-tool.sh", "oxfmt", ...args], {
+      ...env,
+      NAPI_RS_FORCE_WASI: value,
+    });
+    expect(JSON.parse(readFileSync(path.join(dir, "formatter-call.json"), "utf8"))).toEqual({
+      cwd: dir,
+      args,
+    });
+    expect(existsSync(path.join(dir, "node_modules"))).toBe(false);
+    expect(existsSync(path.join(owner, "formatter-call.json"))).toBe(false);
+  });
+
+  it.each([
+    ["NAPI_RS_NATIVE_LIBRARY_PATH", "override"],
+    ["NAPI_RS_FORCE_WASI", "true"],
+    ["NAPI_RS_FORCE_WASI", "error"],
+    ["NAPI_RS_WASI_FLAVOR", "wasm32-wasi"],
+  ])("rejects the platform override %s=%s before formatting", (key, value) => {
+    const { dir, env } = toolingFixture();
+    const result = runFailure(
+      dir,
+      "/bin/bash",
+      ["scripts/pre-commit/run-node-tool.sh", "oxfmt", "--write", "a.ts"],
+      { ...env, [key]: value },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Cannot qualify an overridden formatter platform binding");
+    expect(existsSync(path.join(dir, "formatter-call.json"))).toBe(false);
+  });
 
   it("keeps partial-stage and private-content guards around the tooling formatter", () => {
     const { dir, env } = toolingFixture();
