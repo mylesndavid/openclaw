@@ -19,12 +19,12 @@ import {
   withDeferredPluginMigrationsCurrent,
   type DeferredPluginMigration,
 } from "../infra/deferred-plugin-migrations.js";
+import { retireDeferredPluginSessionImport } from "../infra/deferred-plugin-session-retirement.js";
 import {
   captureDeferredPluginSessionSources,
   deferredPluginSessionStoreIds,
   readDeferredPluginSessionImport,
   recordDeferredPluginSessionImport,
-  retireDeferredPluginSessionImport,
   type DeferredPluginSessionImport,
 } from "../infra/deferred-plugin-session-sources.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -56,6 +56,7 @@ import {
 import { normalizePluginId, normalizePluginsConfig } from "../plugins/config-state.js";
 import { prepareActiveSqliteTranscriptSettlement } from "./doctor-session-sqlite-active.js";
 import {
+  archiveImportedLegacySessionStores,
   planImportedTranscriptArtifactsToArchive,
   planSessionJsonlArchiveMove,
 } from "./doctor-session-sqlite-archive.js";
@@ -1443,113 +1444,6 @@ async function archiveLegacyArtifacts(
     owner.report.unreferencedJsonlFiles = listUnreferencedJsonlFiles(owner.target.storePath, [
       ...referencedPaths,
     ]);
-  }
-}
-
-async function archiveImportedLegacySessionStores(
-  owners: readonly LegacyArchiveTarget[],
-  activeRun: ActiveSessionSqliteMigrationRun,
-  coverage: ReturnType<typeof gatherLegacyArchiveCoverage>,
-  assertCurrent?: () => void,
-  publishSourceRemoval?: (remove: () => void, retainSource: () => void) => void,
-): Promise<void> {
-  const byStore = new Map<string, LegacyArchiveTarget[]>();
-  for (const owner of owners) {
-    const storePath = owner.target.storePath;
-    byStore.set(storePath, [...(byStore.get(storePath) ?? []), owner]);
-  }
-  for (const [storePath, entries] of byStore) {
-    assertCurrent?.();
-    // A historical-only target may never have had an index; losing an admitted index is a failure.
-    if (!coverage.indexIdentities.has(storePath) && !fs.existsSync(storePath)) {
-      continue;
-    }
-    if (
-      !coverage.selectedStorePaths.has(storePath) ||
-      entries.some(
-        ({ report }) =>
-          countBlockingSessionSqliteIssues(report) > 0 ||
-          report.issues.some((issue) => issue.code === "active_sqlite_transcript_jsonl"),
-      )
-    ) {
-      continue;
-    }
-    const first = entries[0]!;
-    let publicationPlanned = false;
-    try {
-      const expected = coverage.indexIdentities.get(storePath);
-      if (!expected || !sameMigrationArtifact(readMigrationArtifactIdentity(storePath), expected)) {
-        throw new Error("Session index changed after import; retaining the unverified original");
-      }
-      const move = planSessionJsonlArchiveMove({
-        archiveKey: "legacy-store",
-        baseNameRaw: path.basename(storePath),
-        kind: "legacy-store",
-        sourcePathRaw: storePath,
-        target: first.target,
-      });
-      const manifestTargets = activeRun.manifest.targets.filter(
-        (target) => target.storePath === storePath,
-      );
-      const transcripts = manifestTargets.flatMap((target) =>
-        target.plannedMoves.filter((item) => item.kind === "transcript"),
-      );
-      const complete =
-        entries.every(
-          ({ validated, report }) =>
-            validated &&
-            report.issues.every((issue) => issue.code === "historical_duplicate_settled"),
-        ) && transcripts.every((item) => item.artifact?.classification !== "protected");
-      const dependencies = entries
-        .flatMap(({ records }) => records.flatMap((record) => record.transcriptDependencies))
-        .map(canonicalMigrationFilePath);
-      move.artifact = {
-        identity: expected,
-        classification: complete ? "imported" : "protected",
-        reason: complete ? "verified-index-import" : "incomplete-index-import",
-        dependencies: [...new Set(dependencies)],
-        disposal: { state: "retained" },
-      };
-      for (const { target } of entries) {
-        assertCurrent?.();
-        recordPlannedMigrationMoves(activeRun, target, [move]);
-        assertSafeSessionSqliteMigrationMove(move, target);
-      }
-      publicationPlanned = true;
-      assertCurrent?.();
-      await moveMigrationArtifact(
-        move.sourcePath,
-        move.archivePath,
-        expected,
-        assertCurrent
-          ? () => {
-              assertCurrent();
-            }
-          : undefined,
-        publishSourceRemoval,
-      );
-      assertCurrent?.();
-      for (const { target, report } of entries) {
-        recordCompletedMigrationMoves(activeRun, target, [move]);
-        report.archivedLegacyStoreFiles!.push(move.archivePath);
-      }
-    } catch (error) {
-      if (error instanceof DeferredPluginMigrationConflictError && error.pending.length > 0) {
-        break;
-      }
-      for (const { report, target } of entries) {
-        report.issues.push({
-          code: "legacy_store_archive_failed",
-          message: `${storePath}: ${formatErrorMessage(error)}`,
-        });
-        // A recorded index plan already protects its dependencies and can reconcile on retry.
-        // Earlier failures have no artifact record, so retain that failure on the owner instead.
-        if (!publicationPlanned) {
-          assertCurrent?.();
-          updateMigrationManifestTarget(activeRun, target, report.issues);
-        }
-      }
-    }
   }
 }
 

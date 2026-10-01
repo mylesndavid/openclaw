@@ -11,12 +11,12 @@ import {
   type SessionStoreTarget,
 } from "../config/sessions/targets.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { retireDeferredPluginSessionImport } from "../infra/deferred-plugin-session-retirement.js";
 import {
   hasDeferredPluginSessionImport,
   prepareSessionSourceVerification,
   readDeferredPluginSessionImport,
   rebuildDeferredPluginSessionSourceIndex,
-  retireDeferredPluginSessionImport,
   resolveVerifiedSessionSource,
   type DeferredPluginSessionImport,
 } from "../infra/deferred-plugin-session-sources.js";
