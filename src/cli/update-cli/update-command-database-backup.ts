@@ -62,10 +62,10 @@ export async function captureUpdateDatabases(params: {
   try {
     const capture = async () => {
       params.assertCurrent();
-      if (maintenance && process.platform === "win32") {
+      if (maintenance) {
         try {
-          // Rollback closes this Windows probe before replacing files. Settle its
-          // checkpoint now so a retained progress reader's WAL is not later drift.
+          // Rollback drains retained writers before replacing files. Capture after
+          // the same checkpoint so writer shutdown cannot look like later writes.
           const exclusion = await prepareOpenClawStateDatabaseRemoval(
             resolveOpenClawStateSqlitePath(env),
             params.assertCurrent,
