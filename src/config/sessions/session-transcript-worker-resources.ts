@@ -1,6 +1,9 @@
 import { channel } from "node:diagnostics_channel";
 import { err, ok, type Result } from "@openclaw/normalization-core/result";
-import { ensureSqliteLibrarySelected } from "../../infra/bun-sqlite-library.js";
+import {
+  captureSqliteWorkerClosePolicy,
+  ensureSqliteLibrarySelected,
+} from "../../infra/bun-sqlite-library.js";
 import { runtimeProcessEntrypoints } from "../../infra/runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
 import {
@@ -49,7 +52,7 @@ import { captureSessionTranscriptStorageEnvironment } from "./transcript-target-
 
 const workerUrl = resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sessionTranscript);
 function createHistoryPool() {
-  let generation: { closeFinalizesStatements: boolean } | undefined;
+  let generation: { canCloseNativeResources: boolean } | undefined;
   const pool = createOwnedWorkerTaskPool<
     SessionHistoryWorkerInput,
     SessionTranscriptWorkerReply<SessionHistoryWorkerInput["kind"]>
@@ -59,9 +62,10 @@ function createHistoryPool() {
     maxWorkers: 1,
     idleTimeoutMs: 0,
     prepareWorker: () => {
-      const current = { closeFinalizesStatements: false };
-      generation = current;
       ensureSqliteLibrarySelected();
+      // The worker inherits this same fact at creation; later admission cannot upgrade it.
+      const current = { canCloseNativeResources: captureSqliteWorkerClosePolicy() };
+      generation = current;
       return {
         options: {},
         async releaseResources() {
@@ -71,30 +75,19 @@ function createHistoryPool() {
         },
       };
     },
-    validateResult(reply) {
-      // This single-worker pool observes replies before dispatch can create a successor.
-      if (generation) {
-        generation.closeFinalizesStatements =
-          reply.ok && reply.sqliteCloseFinalizesStatements === true;
-      }
-    },
     onRetirementFailure() {
       generation = undefined;
     },
   });
   return {
     ...pool,
-    canCloseNativeResources: () =>
-      !process.versions.bun || generation?.closeFinalizesStatements === true,
+    canCloseNativeResources: () => generation?.canCloseNativeResources === true,
     rotate() {
       generation = undefined;
       return pool.rotate();
     },
   };
 }
-
-const historyPages = createHistoryPool();
-const maintenancePages = createHistoryPool();
 
 function createUsageCostPool(kind: "read" | "refresh") {
   return new WorkerTaskPool<UsageCostWorkerInput, UsageCostWorkerReply>({
@@ -153,43 +146,26 @@ const historyDatabases = new Map<string, HistoryDatabaseResource>();
 const historySetTimeout = setTimeout;
 export const historyClearTimeout = clearTimeout;
 let historyGeneration = 0;
-export const historyLane: SessionHistoryWorkerLane = {
-  name: "Session history",
-  pool: historyPages,
-  nativeSequence: 0,
-  retiredSequence: 0,
-  pending: 0,
-};
+function createDatabaseWorkerLane<Pool extends SessionDatabaseWorkerLane["pool"]>(
+  name: string,
+  pool: Pool,
+): SessionDatabaseWorkerLane & { pool: Pool } {
+  return { name, pool, nativeSequence: 0, retiredSequence: 0, pending: 0 };
+}
+
+export const historyLane = createDatabaseWorkerLane("Session history", createHistoryPool());
 // Keep list materialization independent of large history pages, with one extra reader per store.
-export const projectionLane: SessionHistoryWorkerLane = {
-  name: "Session projection",
-  pool: createHistoryPool(),
-  nativeSequence: 0,
-  retiredSequence: 0,
-  pending: 0,
-};
+export const projectionLane = createDatabaseWorkerLane("Session projection", createHistoryPool());
 // Full-store validation cannot yield its snapshot to a foreground history read.
-export const maintenanceLane: SessionHistoryWorkerLane = {
-  name: "Session maintenance",
-  pool: maintenancePages,
-  nativeSequence: 0,
-  retiredSequence: 0,
-  pending: 0,
-};
-export const costReadLane: SessionCostWorkerLane = {
-  name: "Session usage read",
-  pool: createUsageCostPool("read"),
-  nativeSequence: 0,
-  retiredSequence: 0,
-  pending: 0,
-};
-export const costRefreshLane: SessionCostWorkerLane = {
-  name: "Session usage refresh",
-  pool: createUsageCostPool("refresh"),
-  nativeSequence: 0,
-  retiredSequence: 0,
-  pending: 0,
-};
+export const maintenanceLane = createDatabaseWorkerLane("Session maintenance", createHistoryPool());
+export const costReadLane = createDatabaseWorkerLane(
+  "Session usage read",
+  createUsageCostPool("read"),
+);
+export const costRefreshLane = createDatabaseWorkerLane(
+  "Session usage refresh",
+  createUsageCostPool("refresh"),
+);
 
 const historyWorkerLanes = [historyLane, projectionLane, maintenanceLane];
 const databaseWorkerLanes = [...historyWorkerLanes, costReadLane, costRefreshLane];

@@ -657,6 +657,7 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
         nativeCompilerTest,
         compilerGraphTest,
         mixedCompilerTest,
+        "src/auto-reply/reply/get-reply.imports.test.ts",
       ];
       const nativeFiles = vitestArgs.length ? [] : [bunTarget, nativeBunTarget];
       const bunFiles = nativeFiles.length

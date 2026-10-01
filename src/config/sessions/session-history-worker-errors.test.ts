@@ -14,8 +14,20 @@ import * as sqliteScope from "./session-accessor.sqlite-scope.js";
 import { canonicalSessionKeyMigrationRequiredError } from "./session-canonical-row.js";
 import { readSessionHistoryPageInWorker } from "./session-history-worker-runtime.js";
 import { prepareSessionTranscriptHydration } from "./session-transcript-hydration.js";
-import { withSessionHistoryWorkerReadCandidates } from "./session-transcript-worker-resources.js";
+import {
+  historyLane,
+  rotateDatabaseWorkers,
+  withSessionHistoryWorkerReadCandidates,
+} from "./session-transcript-worker-resources.js";
 import { withSessionHistoryWorkerDatabase } from "./session-transcript-worker-runtime.js";
+
+const closeCapabilities = vi.hoisted(() => ({ explicitSqliteCloseReleasesNativeResources: true }));
+vi.mock("../../infra/bun-sqlite-library.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../infra/bun-sqlite-library.js")>()),
+  ensureSqliteLibrarySelected: () => ({ source: "runtime" }),
+  captureSqliteWorkerClosePolicy: () => closeCapabilities.explicitSqliteCloseReleasesNativeResources,
+  getSqliteRuntimeCapabilities: () => ({ ...closeCapabilities, reason: "test policy" }),
+}));
 
 const { createVisibilityFailureDelta, observed, typedFailures } =
   await import("./session-history-worker-errors.test-support.js");
@@ -37,18 +49,6 @@ function input() {
 function invoke(request: ReturnType<typeof input>) {
   assert(observed.handler);
   return Promise.resolve(observed.handler(request));
-}
-
-function useBunMetadata() {
-  const descriptor = Object.getOwnPropertyDescriptor(process.versions, "bun");
-  if (!descriptor) {
-    Object.defineProperty(process.versions, "bun", { value: "synthetic-bun", configurable: true });
-  }
-  return () => {
-    if (!descriptor) {
-      Reflect.deleteProperty(process.versions, "bun");
-    }
-  };
 }
 
 function installWorkerTransport() {
@@ -73,7 +73,8 @@ function installWorkerTransport() {
   });
 }
 
-async function readThroughWorker(request = input()) {
+async function readThroughWorker() {
+  const request = input();
   installWorkerTransport();
   return await withSessionHistoryWorkerDatabase(request.database, (owner) =>
     owner.readEntryPresence(request.scope),
@@ -82,6 +83,7 @@ async function readThroughWorker(request = input()) {
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 beforeEach(() => {
+  closeCapabilities.explicitSqliteCloseReleasesNativeResources = true;
   // Synthetic targets keep discovery outside the error-transfer worker controls.
   vi.spyOn(sqliteScope, "prepareSqliteTranscriptReadScope").mockImplementation(async (scope) =>
     sqliteScope.resolveSqliteTranscriptReadScope(scope),
@@ -92,7 +94,6 @@ beforeEach(() => {
   observed.delta.mockReset();
   observed.lookup.mockReset();
   observed.close.mockReset();
-  observed.closeFinalizesStatements.mockReset().mockReturnValue(false);
   observed.run.mockReset();
   observed.rotate.mockReset().mockResolvedValue(undefined);
   observed.closeResources.mockReset().mockResolvedValue(undefined);
@@ -121,6 +122,7 @@ beforeEach(() => {
 afterEach(async () => {
   observed.rotate.mockResolvedValue(undefined);
   await Promise.all(observed.resources.splice(0).map((resource) => resource.close()));
+  await rotateDatabaseWorkers(historyLane);
   vi.restoreAllMocks();
   expect(observed.nativeWorker).not.toHaveBeenCalled();
 });
@@ -456,175 +458,166 @@ it.each(typedFailures)(
   },
 );
 
-it.runIf(!process.versions.bun)(
-  "retains aliases until native cleanup and preserves later read custody",
-  async () => {
-    const request = input();
-    const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
-    const cleanupEntered = createDeferredCore();
-    const cleanup = createDeferredCore();
-    observed.run.mockResolvedValue({ ok: true, value: false });
-    observed.closeResources.mockImplementation(() => {
-      cleanupEntered.resolve();
-      return cleanup.promise;
+it("retains aliases until native cleanup and preserves later read custody", async () => {
+  const request = input();
+  const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
+  const cleanupEntered = createDeferredCore();
+  const cleanup = createDeferredCore();
+  observed.run.mockResolvedValue({ ok: true, value: false });
+  observed.closeResources.mockImplementation(() => {
+    cleanupEntered.resolve();
+    return cleanup.promise;
+  });
+  const discovery = withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
+    observed.run.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        kind: "session-store-target",
+        logicalAgentId: "main",
+        sourcePath: request.database.path,
+        database: request.database,
+      },
     });
-    const discovery = withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
-      observed.run.mockResolvedValueOnce({
-        ok: true,
-        value: {
-          kind: "session-store-target",
-          logicalAgentId: "main",
-          sourcePath: request.database.path,
-          database: request.database,
-        },
-      });
-      await scope.readStoreTarget({
-        agentId: "main",
-        storePath: request.database.path,
-        env: {},
-        registeredDatabases: [],
-      });
-      await withSessionHistoryWorkerDatabase(request.database, (owner) =>
-        owner.readEntryPresence(request.scope),
-      );
-      candidates[0]!.physicalPath = "/synthetic/replacement.sqlite";
+    await scope.readStoreTarget({
+      agentId: "main",
+      storePath: request.database.path,
+      env: {},
+      registeredDatabases: [],
     });
-    await cleanupEntered.promise;
-    expect(observed.unregister).not.toHaveBeenCalled();
-    expect(observed.rotate).not.toHaveBeenCalled();
-    // This read is newer than the captured cleanup sequence, even on the same physical path.
     await withSessionHistoryWorkerDatabase(request.database, (owner) =>
       owner.readEntryPresence(request.scope),
     );
-    cleanup.resolve();
-    await discovery;
-    expect(observed.closeResources).toHaveBeenCalledWith(
-      JSON.stringify([{ path: request.database.path }]),
-    );
-    expect(observed.unregister).toHaveBeenCalledTimes(1);
-    const retained = observed.resources.find((resource) => resource.agentId === "main");
-    assert(retained);
-    await retained.close();
-    expect(observed.closeResources).toHaveBeenCalledTimes(2);
-    expect(observed.rotate).not.toHaveBeenCalled();
-  },
-);
+    candidates[0]!.physicalPath = "/synthetic/replacement.sqlite";
+  });
+  await cleanupEntered.promise;
+  expect(observed.unregister).not.toHaveBeenCalled();
+  expect(observed.rotate).not.toHaveBeenCalled();
+  // This read is newer than the captured cleanup sequence, even on the same physical path.
+  await withSessionHistoryWorkerDatabase(request.database, (owner) =>
+    owner.readEntryPresence(request.scope),
+  );
+  cleanup.resolve();
+  await discovery;
+  expect(observed.closeResources).toHaveBeenCalledWith(
+    JSON.stringify([{ path: request.database.path }]),
+  );
+  expect(observed.unregister).toHaveBeenCalledTimes(1);
+  const retained = observed.resources.find((resource) => resource.agentId === "main");
+  assert(retained);
+  await retained.close();
+  expect(observed.closeResources).toHaveBeenCalledTimes(2);
+  expect(observed.rotate).not.toHaveBeenCalled();
+});
 
 it.each([
-  { fails: false, capableBun: false },
-  { fails: true, capableBun: false },
-  { fails: false, capableBun: true },
-  { fails: true, capableBun: true },
+  { fails: false, capable: false },
+  { fails: false, capable: true },
+  { fails: true, capable: false },
+  { fails: true, capable: true },
 ])(
-  "joins idle cleanup and retains failures (retirement=$fails, capable Bun=$capableBun)",
-  async ({ fails, capableBun }) => {
-    const restoreRuntime = capableBun ? useBunMetadata() : () => {};
-    try {
-      observed.closeFinalizesStatements.mockReturnValue(capableBun);
-      observed.read.mockReturnValue(undefined);
-      const request = input();
-      expect(await readThroughWorker(request)).toBe(false);
-      const resource = observed.resources.find((entry) => entry.agentId === "main");
-      assert(resource);
-      const failure = new Error("idle database native close failed");
-      const retirementFailure = new Error("idle database worker retirement failed");
-      const retirementEntered = createDeferredCore();
-      const retirement = createDeferredCore();
-      observed.closeResources.mockRejectedValueOnce(failure);
-      observed.rotate.mockImplementationOnce(() => {
-        retirementEntered.resolve();
-        return retirement.promise;
-      });
-      resource.revoke();
-      const closing = resource.close().catch((error: unknown) => error);
-      await retirementEntered.promise;
-      expect(observed.unregister).not.toHaveBeenCalled();
-      if (process.versions.bun && !capableBun) {
-        if (fails) {
-          retirement.reject(retirementFailure);
-          expect(await closing).toBe(retirementFailure);
-          expect(observed.unregister).not.toHaveBeenCalled();
-          await resource.close();
-        } else {
-          retirement.resolve();
-          expect(await closing).toBeUndefined();
-        }
-        expect(observed.closeResources).not.toHaveBeenCalled();
-        expect(observed.unregister).toHaveBeenCalledOnce();
-        return;
-      }
+  "joins idle cleanup and retains failed custody (fails=$fails, capable=$capable)",
+  async ({ fails, capable }) => {
+    closeCapabilities.explicitSqliteCloseReleasesNativeResources = capable;
+    const request = input();
+    observed.run.mockResolvedValue({ ok: true, value: false });
+    await withSessionHistoryWorkerDatabase(request.database, (owner) =>
+      owner.readEntryPresence(request.scope),
+    );
+    const resource = observed.resources.find((entry) => entry.agentId === "main");
+    assert(resource);
+    const failure = new Error("idle database native close failed");
+    const retirementFailure = new Error("idle database worker retirement failed");
+    const retirementEntered = createDeferredCore();
+    const retirement = createDeferredCore();
+    observed.closeResources.mockRejectedValueOnce(failure);
+    observed.rotate.mockImplementationOnce(() => {
+      retirementEntered.resolve();
+      return retirement.promise;
+    });
+    resource.revoke();
+    const closing = resource.close().catch((error: unknown) => error);
+    await retirementEntered.promise;
+    expect(observed.unregister).not.toHaveBeenCalled();
+    if (!capable) {
       if (fails) {
         retirement.reject(retirementFailure);
-        const result = await closing;
-        assert(result instanceof AggregateError);
-        expect(result.errors).toEqual([failure, retirementFailure]);
+        expect(await closing).toBe(retirementFailure);
         expect(observed.unregister).not.toHaveBeenCalled();
         await resource.close();
       } else {
         retirement.resolve();
-        expect(await closing).toBe(failure);
+        expect(await closing).toBeUndefined();
       }
+      expect(observed.closeResources).not.toHaveBeenCalled();
       expect(observed.unregister).toHaveBeenCalledOnce();
-      expect(observed.closeResources).toHaveBeenCalledWith(
-        JSON.stringify([{ path: request.database.path }]),
-      );
-    } finally {
-      restoreRuntime();
+      return;
     }
-  },
-);
-
-it.runIf(!process.versions.bun)(
-  "settles candidate handles before registry continuation without retiring the worker",
-  async () => {
-    const request = input();
-    const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
-    const cleanupEntered = createDeferredCore();
-    const cleanup = createDeferredCore();
-    observed.run
-      .mockResolvedValueOnce({ ok: true, value: { kind: "session-target-registry-required" } })
-      .mockResolvedValueOnce({ ok: true, value: { kind: "session-target-inventory", agents: [] } });
-    observed.closeResources.mockImplementationOnce(() => {
-      cleanupEntered.resolve();
-      return cleanup.promise;
-    });
-    let continued = false;
-    const discovery = withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
-      const inventory = { config: {}, agentIds: ["main"], env: {}, paths: new Map() };
-      expect(
-        await scope.readTargetInventory({
-          ...inventory,
-          registeredDatabases: { status: "deferred" },
-        }),
-      ).toEqual({ kind: "session-target-registry-required" });
-      continued = true;
-      expect(
-        await scope.readTargetInventory({
-          ...inventory,
-          registeredDatabases: [],
-        }),
-      ).toEqual({ kind: "session-target-inventory", agents: [] });
-    });
-    try {
-      await Promise.race([cleanupEntered.promise, discovery]);
-      expect(continued).toBe(false);
+    if (fails) {
+      retirement.reject(retirementFailure);
+      const result = await closing;
+      assert(result instanceof AggregateError);
+      expect(result.errors).toEqual([failure, retirementFailure]);
       expect(observed.unregister).not.toHaveBeenCalled();
-      expect(observed.rotate).not.toHaveBeenCalled();
-    } finally {
-      cleanup.resolve();
-      await discovery;
+      await resource.close();
+    } else {
+      retirement.resolve();
+      expect(await closing).toBe(failure);
     }
-    expect(continued).toBe(true);
-    expect(observed.closeResources).toHaveBeenCalledTimes(2);
+    expect(observed.unregister).toHaveBeenCalledOnce();
     expect(observed.closeResources).toHaveBeenCalledWith(
       JSON.stringify([{ path: request.database.path }]),
     );
-    expect(observed.rotate).not.toHaveBeenCalled();
-    expect(observed.unregister).toHaveBeenCalledTimes(1);
   },
 );
 
-it.runIf(!process.versions.bun).each([false, true])(
+it("settles candidate handles before registry continuation without retiring the worker", async () => {
+  const request = input();
+  const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
+  const cleanupEntered = createDeferredCore();
+  const cleanup = createDeferredCore();
+  observed.run
+    .mockResolvedValueOnce({ ok: true, value: { kind: "session-target-registry-required" } })
+    .mockResolvedValueOnce({ ok: true, value: { kind: "session-target-inventory", agents: [] } });
+  observed.closeResources.mockImplementationOnce(() => {
+    cleanupEntered.resolve();
+    return cleanup.promise;
+  });
+  let continued = false;
+  const discovery = withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
+    const inventory = { config: {}, agentIds: ["main"], env: {}, paths: new Map() };
+    expect(
+      await scope.readTargetInventory({
+        ...inventory,
+        registeredDatabases: { status: "deferred" },
+      }),
+    ).toEqual({ kind: "session-target-registry-required" });
+    continued = true;
+    expect(
+      await scope.readTargetInventory({
+        ...inventory,
+        registeredDatabases: [],
+      }),
+    ).toEqual({ kind: "session-target-inventory", agents: [] });
+  });
+  try {
+    await Promise.race([cleanupEntered.promise, discovery]);
+    expect(continued).toBe(false);
+    expect(observed.unregister).not.toHaveBeenCalled();
+    expect(observed.rotate).not.toHaveBeenCalled();
+  } finally {
+    cleanup.resolve();
+    await discovery;
+  }
+  expect(continued).toBe(true);
+  expect(observed.closeResources).toHaveBeenCalledTimes(2);
+  expect(observed.closeResources).toHaveBeenCalledWith(
+    JSON.stringify([{ path: request.database.path }]),
+  );
+  expect(observed.rotate).not.toHaveBeenCalled();
+  expect(observed.unregister).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true])(
   "joins candidate cleanup retirement and retains custody when retirement fails=%s",
   async (fails) => {
     const request = input();
@@ -672,13 +665,12 @@ it.runIf(!process.versions.bun).each([false, true])(
   },
 );
 
-it.each([false, true])("uses only the replying Bun discovery capability (%s)", async (capable) => {
+it("keeps native worker retirement for unproven candidate cleanup", async () => {
+  closeCapabilities.explicitSqliteCloseReleasesNativeResources = false;
   const request = input();
   const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
-  const restoreRuntime = useBunMetadata();
   observed.run.mockResolvedValue({
     ok: true,
-    ...(capable ? { sqliteCloseFinalizesStatements: true } : {}),
     value: {
       kind: "session-store-target",
       logicalAgentId: "main",
@@ -686,57 +678,54 @@ it.each([false, true])("uses only the replying Bun discovery capability (%s)", a
       database: request.database,
     },
   });
-  try {
-    await withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
-      await scope.readStoreTarget({
-        agentId: "main",
-        storePath: request.database.path,
-        env: {},
-        registeredDatabases: [],
-      });
+  await withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
+    await scope.readStoreTarget({
+      agentId: "main",
+      storePath: request.database.path,
+      env: {},
+      registeredDatabases: [],
     });
-    expect(observed.closeResources).toHaveBeenCalledTimes(capable ? 1 : 0);
-    expect(observed.rotate).toHaveBeenCalledTimes(capable ? 0 : 1);
-    expect(observed.unregister).toHaveBeenCalledTimes(1);
-  } finally {
-    restoreRuntime();
-  }
+  });
+  expect(observed.closeResources).not.toHaveBeenCalled();
+  expect(observed.rotate).toHaveBeenCalledTimes(1);
+  expect(observed.unregister).toHaveBeenCalledTimes(1);
 });
 
-it.each(["read-failed", "database-missing", "registry-required-after-failure"] as const)(
-  "settles inventory readers for %s",
-  async (reason) => {
-    const request = input();
-    const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
-    observed.run.mockResolvedValue({
-      ok: true,
-      sqliteCloseFinalizesStatements: true,
-      value:
-        reason === "registry-required-after-failure"
-          ? { kind: "session-target-registry-required", readFailed: true }
-          : {
-              kind: "session-target-inventory",
-              agents: [{ agentId: "main", result: { available: false, reason }, reads: [] }],
-            },
+it.each(
+  (["read-failed", "database-missing", "registry-required-after-failure"] as const).flatMap(
+    (reason) => [false, true].map((capable) => ({ reason, capable })),
+  ),
+)("settles inventory readers for $reason (capable=$capable)", async ({ reason, capable }) => {
+  closeCapabilities.explicitSqliteCloseReleasesNativeResources = capable;
+  const request = input();
+  const candidates = [{ path: request.database.path, physicalPath: request.database.path }];
+  observed.run.mockResolvedValue({
+    ok: true,
+    value:
+      reason === "registry-required-after-failure"
+        ? { kind: "session-target-registry-required", readFailed: true }
+        : {
+            kind: "session-target-inventory",
+            agents: [{ agentId: "main", result: { available: false, reason }, reads: [] }],
+          },
+  });
+  await withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
+    await scope.readTargetInventory({
+      config: {},
+      agentIds: ["main"],
+      env: {},
+      paths: new Map(),
+      registeredDatabases: [],
     });
-    await withSessionHistoryWorkerReadCandidates(candidates, async (scope) => {
-      await scope.readTargetInventory({
-        config: {},
-        agentIds: ["main"],
-        env: {},
-        paths: new Map(),
-        registeredDatabases: [],
-      });
-    });
-    const retired = reason !== "database-missing";
-    expect(observed.closeResources).toHaveBeenCalledTimes(retired ? 0 : 1);
-    expect(observed.rotate).toHaveBeenCalledTimes(
-      reason === "registry-required-after-failure" ? 2 : retired ? 1 : 0,
-    );
-  },
-);
+  });
+  const retired = reason !== "database-missing" || !capable;
+  expect(observed.closeResources).toHaveBeenCalledTimes(retired ? 0 : 1);
+  expect(observed.rotate).toHaveBeenCalledTimes(
+    reason === "registry-required-after-failure" ? 2 : retired ? 1 : 0,
+  );
+});
 
-it.runIf(!process.versions.bun).each([false, true])(
+it.each([false, true])(
   "keeps alias custody through overlapping retirement when retirement fails=%s",
   async (fails) => {
     const request = input();
@@ -801,9 +790,14 @@ it.runIf(!process.versions.bun).each([false, true])(
   },
 );
 
-it.each(["store", "inventory"] as const)(
-  "binds queued %s discovery and byte accounting to its admitted candidates",
-  async (kind) => {
+it.each(
+  (["store", "inventory"] as const).flatMap((kind) =>
+    [false, true].map((capable) => ({ kind, capable })),
+  ),
+)(
+  "binds queued $kind discovery and byte accounting to admitted candidates (capable=$capable)",
+  async ({ kind, capable }) => {
+    closeCapabilities.explicitSqliteCloseReleasesNativeResources = capable;
     const admitted = {
       path: "/synthetic/admitted.sqlite",
       physicalPath: "/synthetic/physical.sqlite",
@@ -884,10 +878,13 @@ it.each(["store", "inventory"] as const)(
       });
       await discovery;
     }
-    if (!process.versions.bun) {
+    if (capable) {
       expect(observed.closeResources).toHaveBeenCalledWith(
         JSON.stringify([{ path: original.physicalPath, scope: original.scope }]),
       );
+    } else {
+      expect(observed.closeResources).not.toHaveBeenCalled();
+      expect(observed.rotate).toHaveBeenCalledOnce();
     }
   },
 );

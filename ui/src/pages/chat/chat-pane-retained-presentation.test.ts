@@ -62,7 +62,6 @@ describe("chat pane retained presentation lifecycle", () => {
       patchSettings({ sidebarSessionLayouts: { [state.sessionKey]: layout } });
       const presentation = pane as TestChatPane & {
         compact: boolean;
-        selectedSessionRailMode: (sessionKey: string) => "expanded" | "hidden";
       };
       presentation.compact = compact;
       pane.connectedClient = null;
@@ -75,9 +74,6 @@ describe("chat pane retained presentation lifecycle", () => {
       );
       expect(state.sidebarLayout.open).toBe(!compact);
       expect(isSidebarSlotVisible(state.sidebarLayout, "companion")).toBe(!compact);
-      expect(presentation.selectedSessionRailMode(state.sessionKey)).toBe(
-        compact ? "hidden" : "expanded",
-      );
       expect(isSidebarSlotVisible(state.sidebarLayout, "conversation")).toBe(true);
       expect(loadSettings().sidebarSessionLayouts?.[state.sessionKey]).toMatchObject(layout);
       expect(isSidebarSlotVisible(openSlot(state.sidebarLayout, "workspace"), "workspace")).toBe(
