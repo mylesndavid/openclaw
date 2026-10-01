@@ -8,8 +8,8 @@ import type { PlacementStoreRuntime } from "./placement-runtime.js";
 import { matchesWorkerPlacementTarget } from "./placement-target.js";
 import {
   PERSONAL_SCOPE,
-  query,
   SessionWorkspaceReservationBusyError,
+  workspaceReservationQuery,
 } from "./placement-workspace-reservation.kernel.js";
 
 const SCOPE = "session-workspace-action";
@@ -43,14 +43,14 @@ function assertReconciled(
   }
   const pending = executeSqliteQueryTakeFirstSync(
     db,
-    query(db)
+    workspaceReservationQuery(db)
       .selectFrom("worker_workspace_pending_results")
       .select("session_id")
       .where("session_id", "=", identity.sessionId),
   );
   const reconciliation = executeSqliteQueryTakeFirstSync(
     db,
-    query(db)
+    workspaceReservationQuery(db)
       .selectFrom("worker_workspace_reconciliations")
       .select("session_id")
       .where("session_id", "=", identity.sessionId),

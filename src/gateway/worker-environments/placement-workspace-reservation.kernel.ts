@@ -4,7 +4,7 @@ import type { DB } from "../../state/openclaw-state-db.generated.js";
 
 export const PERSONAL_SCOPE = "session-workspace-personal-publication";
 export class SessionWorkspaceReservationBusyError extends Error {}
-export const query = (db: DatabaseSync) =>
+export const workspaceReservationQuery = (db: DatabaseSync) =>
   getNodeSqliteKysely<
     Pick<
       DB,
@@ -17,7 +17,7 @@ export function assertSessionWorkspaceUnreserved(db: DatabaseSync, sessionId: st
   if (
     executeSqliteQueryTakeFirstSync(
       db,
-      query(db)
+      workspaceReservationQuery(db)
         .selectFrom("state_leases")
         .select("owner")
         .where("scope", "=", PERSONAL_SCOPE)
