@@ -907,7 +907,7 @@ describe("requester settle wake product flow", () => {
       );
       const context = createGatewayContext();
       await registry.initSubagentRegistry();
-      await registry.activateSubagentRegistry(context.resolveGatewayContext);
+      await registry.activateSubagentRegistry(() => context);
       await registry.registerSubagentRun(
         createSubagentRunParams({
           ...child,
@@ -934,7 +934,7 @@ describe("requester settle wake product flow", () => {
       if (restart) {
         registry.resetSubagentRegistryForTests({ persist: false });
         await registry.initSubagentRegistry();
-        await registry.activateSubagentRegistry(context.resolveGatewayContext);
+        await registry.activateSubagentRegistry(() => context);
         await flushOwnedWork();
       }
 
