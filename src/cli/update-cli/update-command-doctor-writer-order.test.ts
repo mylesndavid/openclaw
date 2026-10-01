@@ -13,6 +13,7 @@ import {
   UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV,
   writeUpdatePostInstallDoctorResult,
 } from "../../infra/update-doctor-result.js";
+import { recordCommandProcessFailure } from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { withEnvAsync } from "../../test-utils/env.js";
@@ -93,7 +94,14 @@ vi.mock("../../process/exec.js", async (original) => {
       const [command, ...argv] = args[0];
       if (command && argv[1] === "doctor" && argv.includes("--repair")) {
         return {
-          ...(await mocks.child(command, argv, args[1])),
+          ...(await mocks.child(command, argv, args[1]).catch((error: unknown) => {
+            // The in-process writer fixture never launches a native child.
+            throw recordCommandProcessFailure(error, {
+              code: 1,
+              cleanup: "normal",
+              termination: "exit",
+            });
+          })),
           code: 0,
           signal: null,
           killed: false,

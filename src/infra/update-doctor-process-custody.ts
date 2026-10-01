@@ -7,7 +7,7 @@ import {
   type CommandProcessCustody,
   type CommandProcessIdentity,
 } from "../process/command-process-custody.js";
-import type { SpawnResult } from "../process/exec-result.js";
+import type { CommandProcessOutcome } from "../process/exec-result.js";
 import { retainCommandProcessCleanup } from "../process/exec-spawn.js";
 import { hasErrnoCode } from "./errno.js";
 import { UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV } from "./update-doctor-result.js";
@@ -185,22 +185,23 @@ export function createUpdateDoctorProcessCustody(
   );
   let mayRemove = false;
   return {
-    async settle(result: SpawnResult): Promise<UpdateStepResult | undefined> {
+    async settle(result?: CommandProcessOutcome): Promise<UpdateStepResult | undefined> {
       const started = Date.now();
       const interrupted =
+        !result ||
         result.cleanup === "forced" ||
         result.cleanup === "uncertain" ||
         result.termination !== "exit";
-      const abnormal = interrupted || result.code !== 0;
-      const pid = result.pid;
-      if (pid === undefined && result.cleanup === "normal") {
+      const abnormal = interrupted || result?.code !== 0;
+      const pid = result?.pid;
+      if (pid === undefined && result?.cleanup === "normal") {
         mayRemove = true;
         return undefined;
       }
       const rootExtinct =
         pid !== undefined &&
-        result.cleanup !== "uncertain" &&
-        !(process.platform === "win32" && result.cleanup === "forced") &&
+        result?.cleanup !== "uncertain" &&
+        !(process.platform === "win32" && result?.cleanup === "forced") &&
         !isChildProcessTreeAlive({ pid });
       let receipt: Receipt | undefined;
       try {
@@ -211,7 +212,7 @@ export function createUpdateDoctorProcessCustody(
           parsed.success &&
           parsed.data.nonce === descriptor.nonce &&
           parsed.data.runId === runId &&
-          parsed.data.pid === pid
+          (pid === undefined || parsed.data.pid === pid)
         ) {
           receipt = parsed.data;
         }
@@ -244,10 +245,11 @@ export function createUpdateDoctorProcessCustody(
       if (settled && !abnormal && receipt?.slots.length === 0) {
         return undefined;
       }
+      const knownPid = pid ?? receipt?.pid;
       const pids = [
         ...new Set([
           ...groups.pids,
-          ...(!rootExtinct || !receipt || pending > 0 ? (pid === undefined ? [] : [pid]) : []),
+          ...(!rootExtinct || !receipt || pending > 0 ? (knownPid ? [knownPid] : []) : []),
         ]),
       ];
       const message = settled

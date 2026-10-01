@@ -19,7 +19,10 @@ import {
   getUpdateRun,
   recordUpdateRunStep,
 } from "../../infra/update-run-ledger.js";
-import { CommandProcessCleanupError } from "../../process/exec-result.js";
+import {
+  CommandProcessCleanupError,
+  recordCommandProcessFailure,
+} from "../../process/exec-result.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   closeOpenClawStateDatabaseForTest,
@@ -70,7 +73,14 @@ vi.mock("../../process/exec.js", async (importOriginal) => {
       if (args[0].includes("doctor") && args[0].includes("--repair")) {
         const [command, ...argv] = args[0];
         return {
-          ...(await mocks.command(command, argv, args[1])),
+          ...(await mocks.command(command, argv, args[1]).catch((error: unknown) => {
+            // The fixture performs no native spawn; preserve its diagnostic rejection.
+            throw recordCommandProcessFailure(error, {
+              code: 1,
+              cleanup: "normal",
+              termination: "exit",
+            });
+          })),
           code: 0,
           signal: null,
           killed: false,

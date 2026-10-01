@@ -57,11 +57,7 @@ it.each([false, true])(
     expect(await retainUpdateDoctorProcesses()).toBeUndefined();
     const settlement = await parent.settle({
       pid: 4242,
-      stdout: "",
-      stderr: "",
       code: interrupted ? null : 0,
-      signal: interrupted ? "SIGKILL" : null,
-      killed: interrupted,
       cleanup: interrupted ? "forced" : "normal",
       termination: interrupted ? "timeout" : "exit",
     });

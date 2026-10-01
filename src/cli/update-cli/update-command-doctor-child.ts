@@ -12,6 +12,7 @@ import type { UpdateStepResult } from "../../infra/update-step-result.js";
 import {
   CommandProcessCleanupError,
   createSanitizedCommandError,
+  readCommandProcessFailure,
 } from "../../process/exec-result.js";
 import {
   runUtf8CommandWithTimeout,
@@ -125,14 +126,25 @@ export async function runUpdateDoctorProcess(
     context.processNamespace,
   );
   try {
-    const result = await runUtf8CommandWithTimeout(argv, {
-      ...options,
-      killProcessTree: true,
-      requireProcessTreeExtinction: true,
-    });
-    const settlement = await custody.settle(result);
+    let outcome: { result: SpawnResult } | { error: unknown };
+    try {
+      outcome = {
+        result: await runUtf8CommandWithTimeout(argv, {
+          ...options,
+          killProcessTree: true,
+          requireProcessTreeExtinction: true,
+        }),
+      };
+    } catch (error) {
+      outcome = { error };
+    }
+    const settlement = await custody.settle(
+      "result" in outcome ? outcome.result : readCommandProcessFailure(outcome.error),
+    );
     if (settlement) {
-      const error = new CommandProcessCleanupError();
+      const error = new CommandProcessCleanupError(
+        "error" in outcome ? { cause: outcome.error } : undefined,
+      );
       error.message = settlement.stderrTail ?? "Doctor process settlement could not be recorded.";
       try {
         context.onProcessSettlement?.(settlement);
@@ -140,13 +152,21 @@ export async function runUpdateDoctorProcess(
         if (settlement.exitCode !== 0) {
           throw new AggregateError([error, cause], error.message, { cause });
         }
+        if ("error" in outcome) {
+          throw new AggregateError([outcome.error, cause], "Doctor settlement recording failed", {
+            cause,
+          });
+        }
         throw cause;
       }
       if (settlement.exitCode !== 0) {
         throw error;
       }
     }
-    return result;
+    if ("error" in outcome) {
+      throw outcome.error;
+    }
+    return outcome.result;
   } finally {
     custody.close();
   }

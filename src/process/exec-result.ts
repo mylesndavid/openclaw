@@ -1,4 +1,8 @@
-import { collectNestedErrorCandidates } from "@openclaw/normalization-core/error-coercion";
+import {
+  collectNestedErrorCandidates,
+  toErrorObject,
+} from "@openclaw/normalization-core/error-coercion";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 
 const commandCleanupUncertain = Symbol.for("openclaw.command-cleanup-uncertain");
 
@@ -45,6 +49,58 @@ export type SpawnResult = {
   outputLimitExceeded?: boolean;
   outputErrorStream?: "stdout" | "stderr";
 };
+
+export type CommandProcessOutcome = Pick<SpawnResult, "pid" | "code" | "cleanup" | "termination">;
+const commandFailureOutcome = Symbol.for("openclaw.command-process-outcome");
+
+/** Lifecycle facts stay private; callers retain the original error and its diagnostics. */
+export function recordCommandProcessFailure(error: unknown, outcome: CommandProcessOutcome): Error {
+  const failure = toErrorObject(error, "Command failed");
+  const target = Object.isExtensible(failure)
+    ? failure
+    : new Error(failure.message, { cause: failure });
+  return Object.defineProperty(target, commandFailureOutcome, {
+    value: Object.freeze({ ...outcome }),
+    configurable: true,
+  });
+}
+
+export function readCommandProcessFailure(error: unknown): CommandProcessOutcome | undefined {
+  for (const cause of collectNestedErrorCandidates(error)) {
+    try {
+      const outcome: unknown = isRecord(cause)
+        ? Object.getOwnPropertyDescriptor(cause, commandFailureOutcome)?.value
+        : undefined;
+      if (
+        isRecord(outcome) &&
+        (outcome.pid === undefined ||
+          (typeof outcome.pid === "number" &&
+            Number.isSafeInteger(outcome.pid) &&
+            outcome.pid > 0)) &&
+        (outcome.code === null || typeof outcome.code === "number") &&
+        (outcome.cleanup === undefined ||
+          outcome.cleanup === "normal" ||
+          outcome.cleanup === "cooperative" ||
+          outcome.cleanup === "forced" ||
+          outcome.cleanup === "uncertain") &&
+        (outcome.termination === "exit" ||
+          outcome.termination === "signal" ||
+          outcome.termination === "timeout" ||
+          outcome.termination === "no-output-timeout")
+      ) {
+        return {
+          pid: outcome.pid,
+          code: outcome.code,
+          cleanup: outcome.cleanup,
+          termination: outcome.termination,
+        };
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
 
 export const TIMEOUT_EXIT_CODE = 124;
 
