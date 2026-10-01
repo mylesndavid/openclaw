@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveShardPlans, runShardPlans } from "../../scripts/ci-run-node-test-shard.mts";
 import { createVitestCacheWarmGroups } from "../../scripts/lib/ci-node-test-plan.mts";
-import { BUN_VITEST_ENV } from "../../scripts/lib/ci-test-runtime.mts";
+import { BUN_UI_TEST_ENV } from "../../scripts/lib/ci-test-runtime.mts";
 import { runManagedCommand } from "../../scripts/lib/managed-child-process.mts";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
@@ -127,12 +127,6 @@ describe("protected Vitest cache collection", () => {
                   files: JSON.parse(readFileSync(childEnv.OPENCLAW_VITEST_INCLUDE_FILE!, "utf8")),
                 });
                 expect(childEnv.NODE_OPTIONS).toBe("--max-old-space-size=8192");
-                const tunedBun =
-                  childEnv.OPENCLAW_VITEST_RUNTIME === "bun" &&
-                  childArgs[0] === "test/vitest/vitest.unit-fast.config.ts";
-                for (const [key, value] of Object.entries(BUN_VITEST_ENV)) {
-                  expect(childEnv[key]).toBe(tunedBun ? value : undefined);
-                }
                 return childEnv.OPENCLAW_VITEST_RUNTIME === "node" && nonUiCollections.length === 1
                   ? 19
                   : 0;
@@ -164,7 +158,7 @@ describe("protected Vitest cache collection", () => {
         expect(collection.env.NODE_COMPILE_CACHE).toBe(compileRoot);
       }
       const [bun, node] = uiCollections;
-      expect(bun!.env).toMatchObject(BUN_VITEST_ENV);
+      expect(bun!.env).toMatchObject(BUN_UI_TEST_ENV);
       expect(bun!.env.OPENCLAW_VITEST_INCLUDE_FILE).toBeUndefined();
       expect(bun!.env.OPENCLAW_VITEST_FS_MODULE_CACHE_ROOT).toBe(
         join(cacheRoot, "vitest-cache-bun-0"),

@@ -48,12 +48,12 @@ export type CiTestRuntimeSelection =
       env?: never;
     };
 
-// Delay top-tier compilation for UI and unit-fast Vitest workers while keeping
-// every JIT tier enabled and sharing the producer/consumer policy.
-export const BUN_VITEST_ENV = {
+// Short-lived UI workers spend less time compiling their top JIT tier when it
+// starts later. Keep every tier enabled and share the producer/consumer policy.
+export const BUN_UI_TEST_ENV = {
   BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "512000",
   BUN_JSC_thresholdForFTLOptimizeSoon: "8000",
-  // Avoid sweeping parked allocator threads between short test operations.
+  // Avoid sweeping parked allocator threads between short UI update cycles.
   MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "1000",
 } as const;
 
@@ -298,10 +298,8 @@ export function resolveCiTestRuntimeSelections(
   ) {
     return node;
   }
-  const completeBun = (env?: VitestRuntimeSelection["env"]): CiTestRuntimeSelection[] => {
-    const bun: CiTestRuntimeSelection = { runtime: "bun", ...(env ? { env } : {}) };
-    return policy === "dual" ? [...node, bun] : [bun];
-  };
+  const completeBun = (): CiTestRuntimeSelection[] =>
+    policy === "dual" ? [{ runtime: "node" }, { runtime: "bun" }] : [{ runtime: "bun" }];
   const uiPartition =
     selection.configs?.length === 1 &&
     selection.configs[0] === "ui/vitest.config.ts" &&
@@ -356,7 +354,7 @@ export function resolveCiTestRuntimeSelections(
         { runtime: "bun", engine: "bun-test", files: [...selection.targets] },
       ];
     }
-    return completeBun(config === unitFastConfig ? BUN_VITEST_ENV : undefined);
+    return completeBun();
   }
   if (
     selection.configs?.length === 2 &&
@@ -454,9 +452,7 @@ export function resolveCiTestRuntimeSelections(
             runtime: "bun" as const,
             includePatterns: vitestFiles,
             ...(partition.includeAfterShard ? { includeAfterShard: true as const } : {}),
-            ...(config === "ui/vitest.config.ts" || config === unitFastConfig
-              ? { env: BUN_VITEST_ENV }
-              : {}),
+            ...(config === "ui/vitest.config.ts" ? { env: BUN_UI_TEST_ENV } : {}),
           },
         ]
       : []),

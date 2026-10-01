@@ -29,7 +29,6 @@ import {
 import { encodeNodeTestGroups } from "../../scripts/lib/ci-node-test-groups-codec.mts";
 import nativeBunQualification from "../../scripts/lib/ci-test-native-bun-qualification.json" with { type: "json" };
 import {
-  BUN_VITEST_ENV,
   ciTestShardRequiresBun,
   resolveCiTestRuntimeSelections,
 } from "../../scripts/lib/ci-test-runtime.mts";
@@ -401,12 +400,6 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
             args,
             cache: env.OPENCLAW_VITEST_FS_MODULE_CACHE_ROOT,
           });
-          const tunedBun =
-            env.OPENCLAW_VITEST_RUNTIME === "bun" &&
-            (args[0] === bunConfig || args[0] === bunTarget);
-          for (const [key, value] of Object.entries(BUN_VITEST_ENV)) {
-            expect(env[key]).toBe(tunedBun ? value : undefined);
-          }
           if (label.endsWith("eligible")) {
             expect(JSON.parse(readFileSync(env.OPENCLAW_VITEST_INCLUDE_FILE!, "utf8"))).toEqual([
               bunTarget,
@@ -695,9 +688,6 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
             scratchDir: makeScratchDir(),
             runChild: async (args, env, label, timing) => {
               const native = label.startsWith("bun-native:");
-              for (const [key, value] of Object.entries(BUN_VITEST_ENV)) {
-                expect(env[key]).toBe(label.startsWith("bun:") ? value : undefined);
-              }
               expect(args).toEqual(
                 native
                   ? ["--native-bun", ...nativeFiles.map((file) => `./${file}`)]
@@ -796,7 +786,6 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
       {
         runtime: "bun",
         includePatterns: ["packages/markdown-core/src/render-aware-chunking.test.ts"],
-        env: BUN_VITEST_ENV,
       },
       { runtime: "bun", engine: "bun-test", files: [bunTarget] },
     ]);
@@ -834,7 +823,7 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     ]) {
       expect(
         resolveCiTestRuntimeSelections({ ...selection, vitestArgs }, "bun-compatible"),
-      ).toEqual([{ runtime: "bun", env: BUN_VITEST_ENV }]);
+      ).toEqual([{ runtime: "bun" }]);
     }
     expect(
       resolveCiTestRuntimeSelections(
@@ -843,7 +832,7 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
         },
         "bun-compatible",
       ),
-    ).toEqual([{ runtime: "bun", env: BUN_VITEST_ENV }]);
+    ).toEqual([{ runtime: "bun" }]);
     expect(
       resolveCiTestRuntimeSelections(
         {
@@ -852,9 +841,7 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
         },
         "bun-compatible",
       ),
-    ).toEqual([
-      { runtime: "bun", includePatterns: ["src/infra/plain-object.test.ts"], env: BUN_VITEST_ENV },
-    ]);
+    ).toEqual([{ runtime: "bun", includePatterns: ["src/infra/plain-object.test.ts"] }]);
   });
 
   it("keeps changed qualification inputs on Vitest without dropping their coverage", () => {
@@ -879,19 +866,19 @@ describe("scripts/ci-run-node-test-shard.mts", () => {
     writeFileSync(path.join(cwd, nativeBunTarget), `${readFileSync(nativeBunTarget, "utf8")}\n`);
     expect(resolveCiTestRuntimeSelections(selection, "dual", cwd)).toEqual([
       { runtime: "node" },
-      { runtime: "bun", includePatterns: [nativeBunTarget], env: BUN_VITEST_ENV },
+      { runtime: "bun", includePatterns: [nativeBunTarget] },
       { runtime: "bun", engine: "bun-test", files: [bunTarget, helperTest] },
     ]);
     writeFileSync(path.join(cwd, helper), "// changed fixture helper\n");
     expect(resolveCiTestRuntimeSelections(selection, "dual", cwd)).toEqual([
       { runtime: "node" },
-      { runtime: "bun", includePatterns: [helperTest, nativeBunTarget], env: BUN_VITEST_ENV },
+      { runtime: "bun", includePatterns: [helperTest, nativeBunTarget] },
       { runtime: "bun", engine: "bun-test", files: [bunTarget] },
     ]);
     writeFileSync(path.join(cwd, setup), "// changed setup\n");
     expect(resolveCiTestRuntimeSelections(selection, "dual", cwd)).toEqual([
       { runtime: "node" },
-      { runtime: "bun", includePatterns: files, env: BUN_VITEST_ENV },
+      { runtime: "bun", includePatterns: files },
     ]);
   });
 

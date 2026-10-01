@@ -140,8 +140,9 @@ Bun's Vitest parent completes the canonical SQLite native-close admission before
 creating test threads. Each worker inherits that decision, allowing capable
 runtimes to reuse readers while negative probes retain conservative cleanup.
 
-Audited synchronous ordinary unit-fast tests with no hooks use Bun's native test
-runner. The same runtime owner intersects their qualification data with the
+Audited ordinary unit-fast tests with no hooks use Bun's native test runner,
+including qualified async callback tests. Tests that register a pending promise
+assertion before settling it retain Vitest: native Bun waits inside that matcher. The same runtime owner intersects their qualification data with the
 canonical inventory and each existing stripe's include patterns. The remaining
 compatible files keep Vitest on Bun. Native admission checks test, setup, and
 fixture-helper bytes; changed or unreadable inputs return the affected tests to
@@ -245,15 +246,13 @@ not a worker-lifetime or memory limit; the native pool still decides reuse.
 Cached projects retain Vitest's failure/duration ordering, and explicit file
 shuffling retains its native seeded order.
 
-The CI runtime owner delays FTL compilation for Bun/Vitest UI and ordinary
-unit-fast selections with warmup/soon thresholds of 512000/8000. Every JIT tier
-remains enabled. Both complete configs and exact unit-fast targets use this
-policy; native Bun tests retain their own runtime settings. The protected cache
-publisher uses the same policy for unit-fast collection and its seven canonical
-UI seed files on Bun. PR jobs restore those Bun seeds alongside the Node seeds,
-with separate transform-cache leaves.
+The UI runtime owner delays FTL compilation with warmup/soon thresholds of
+512000/8000. These short-lived workers benefit from less compilation work;
+the protected cache publisher uses the same policy when collecting its seven
+canonical UI seed files on Bun. PR jobs restore that Bun seed alongside the
+Node seed, with separate transform-cache leaves.
 The same owner sets `MIMALLOC_PURGE_HOLES_MIN_INTERVAL=1000` to reduce allocator
-scavenger work between short test operations; normal reclamation and default heaps remain enabled.
+scavenger work between short UI updates; normal reclamation and default heaps remain enabled.
 
 The test-runtime setup action installs a checksum-pinned build of the Bun fork
 only for jobs that need it. The source commit, archive checksum, and executable

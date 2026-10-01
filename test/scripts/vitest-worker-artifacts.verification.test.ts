@@ -49,16 +49,23 @@ it("keeps the runner event loop responsive while verifying a completed generatio
   }
 });
 
-it.each(["inputs", "outputs"] as const)(
-  "drains active %s reads before failed verification releases the generation",
-  async (group) => {
+it.each([
+  { group: "inputs", damage: "changed" },
+  { group: "outputs", damage: "changed" },
+  { group: "inputs", damage: "missing" },
+  { group: "outputs", damage: "missing" },
+] as const)(
+  "drains active $group reads before $damage verification releases the generation",
+  async ({ group, damage }) => {
     const owner = createVitestWorkerRun();
     const directory = owner.descriptor.directory;
     const files = group === "inputs" ? directory : path.join(directory, "dist");
     fs.mkdirSync(files, { recursive: true });
     const bad = path.join(files, "changed.js");
     const held = path.join(files, "held.js");
-    fs.writeFileSync(bad, "changed");
+    if (damage === "changed") {
+      fs.writeFileSync(bad, "changed");
+    }
     fs.writeFileSync(held, "expected");
     const hash = hashVitestWorkerArtifact("expected");
     const manifest: VitestWorkerManifest = {
@@ -77,17 +84,21 @@ it.each(["inputs", "outputs"] as const)(
     const started = createDeferred();
     const failedRead = createDeferred();
     const release = createDeferred();
-    const readFile = fs.promises.readFile.bind(fs.promises);
-    const reader = vi.spyOn(fs.promises, "readFile").mockImplementation(async (...args) => {
-      if (args[0] === held) {
+    const readFile = fs.readFile.bind(fs);
+    const reader = vi.spyOn(fs, "readFile").mockImplementation((...args) => {
+      const [filename, callback] = args;
+      if (filename === held) {
         started.resolve();
-        await release.promise;
+        void release.promise.then(() => readFile(...args));
+        return;
       }
-      const bytes = await readFile(...args);
-      if (args[0] === bad) {
+      if (filename !== bad) {
+        return readFile(...args);
+      }
+      readFile(filename, (error, bytes) => {
+        callback(error, bytes);
         failedRead.resolve();
-      }
-      return bytes;
+      });
     });
     let completed = false;
     let failure: unknown;
@@ -117,7 +128,11 @@ it.each(["inputs", "outputs"] as const)(
       group === "inputs"
         ? "Source changed during compiled subprocess invocation"
         : "Compiled subprocess artifact changed";
-    expect(failure).toMatchObject({ message: expect.stringContaining(diagnostic) });
+    if (damage === "missing") {
+      expect(failure).toMatchObject({ code: "ENOENT" });
+    } else {
+      expect(failure).toMatchObject({ message: expect.stringContaining(diagnostic) });
+    }
     expect(fs.existsSync(directory)).toBe(false);
   },
 );

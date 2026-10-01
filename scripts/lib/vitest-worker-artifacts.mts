@@ -26,6 +26,19 @@ const declarations = new Map(
 export const VITEST_WORKER_PREPARE_REQUEST = "openclaw:prepare-test-subprocesses";
 export const VITEST_WORKER_PREPARE_REPLY = "openclaw:test-subprocesses-prepared";
 
+function readArtifact(filename: string): Promise<Buffer> {
+  // Callback reads reduce overhead across the generation's many small files.
+  return new Promise((resolve, reject) => {
+    fs.readFile(filename, (error, bytes) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(bytes);
+      }
+    });
+  });
+}
+
 export async function verifyVitestWorkerArtifacts(
   directory: string,
   manifest?: VitestWorkerManifest,
@@ -55,7 +68,7 @@ export async function verifyVitestWorkerArtifacts(
       const settled = await Promise.allSettled(
         entries.slice(offset, offset + batchSize).map(async ([name, expected]) => {
           const filename = baseDir ? path.join(baseDir, name) : name;
-          if (hashVitestWorkerArtifact(await fs.promises.readFile(filename)) !== expected) {
+          if (hashVitestWorkerArtifact(await readArtifact(filename)) !== expected) {
             throw new Error(`${changed}: ${name}`);
           }
           if (
