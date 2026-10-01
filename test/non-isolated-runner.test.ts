@@ -1,3 +1,4 @@
+/* @vitest-environment node */
 // Regression coverage for the non-isolated runner's cross-file cleanup. Keep
 // every producer/observer pair in one child run: the contract is file-to-file
 // cleanup, not five independent Vitest process boots.
@@ -8,6 +9,7 @@ import path from "node:path";
 import { expect, it } from "vitest";
 import type { JsonTestResults } from "vitest/node";
 import type { VitestReportCapture } from "../scripts/lib/vitest-report-capture.mts";
+import { createVitestWorkerRun } from "../scripts/lib/vitest-worker-run.mts";
 import { resolveTestNodeExecPath } from "../src/test-utils/node-process.js";
 import { runVitestShutdownCommand } from "./helpers/vitest-shutdown-command.ts";
 import { agentReaderFixtureFiles } from "./non-isolated-runner.agent-reader-fixtures.ts";
@@ -460,8 +462,20 @@ async function assertCompletion(
   const capture: VitestReportCapture = JSON.parse(
     await fs.readFile(`${expected.reportPath}.capture.json`, "utf8"),
   );
+  const report: JsonTestResults = JSON.parse(await fs.readFile(expected.reportPath, "utf8"));
+  const childFailures = report.testResults.flatMap((file) =>
+    [file.message, ...file.assertionResults.flatMap((test) => test.failureMessages)]
+      .filter((message): message is string => typeof message === "string" && message.length > 0)
+      .map(
+        (message) =>
+          `${path.basename(file.name)}: ${message.split("\n", 2).join("\n").slice(0, 512)}`,
+      ),
+  );
   expect(expected.pid).toEqual(expect.any(Number));
-  expect(capture).toMatchObject({
+  expect(
+    capture,
+    `Child report: ${expected.reportPath}\n${childFailures.slice(0, 20).join("\n")}`,
+  ).toMatchObject({
     pid: expected.pid,
     root: expected.root,
     processTimedOut: false,
@@ -480,7 +494,6 @@ async function assertCompletion(
     expect(module).toMatchObject(project);
   }
 
-  const report: JsonTestResults = JSON.parse(await fs.readFile(expected.reportPath, "utf8"));
   expect(report.testResults.map((file) => file.name).toSorted()).toEqual(expected.files);
   expect(report).toMatchObject({
     numTotalTests: 66,
@@ -560,6 +573,7 @@ class AlphabeticalSequencer extends BaseSequencer {
 }
 export default defineConfig({
   cacheDir: ${JSON.stringify(path.join(root, ".vite"))},
+  plugins: sharedVitestConfig.plugins,
   resolve: sharedVitestConfig.resolve,
   test: {
     name: "non-isolated-runner",
@@ -582,7 +596,9 @@ export default defineConfig({
 
     const reportPath = path.join(root, "report.json");
     let child!: ChildProcess;
-    const result = await runVitestShutdownCommand({
+    const env = childEnv();
+    const workers = createVitestWorkerRun(env);
+    const command = runVitestShutdownCommand({
       bin: resolveTestNodeExecPath(),
       args: [
         path.join(vitestPackageDir, "vitest.mjs"),
@@ -599,13 +615,20 @@ export default defineConfig({
         `--outputFile.json=${reportPath}`,
       ],
       cwd: repoRoot,
-      env: childEnv(),
+      env,
+      workerRun: workers,
       maxBytes: 16 * 1024 * 1024,
       signal,
       onReady(owned) {
         child = owned;
       },
     });
+    let result: Awaited<typeof command>;
+    try {
+      result = await command;
+    } finally {
+      await workers.dispose();
+    }
     const completion: ChildCompletion = {
       exitCode: child.exitCode,
       signalCode: child.signalCode,
@@ -623,7 +646,12 @@ export default defineConfig({
         .toSorted(),
       reportPath,
     };
-    await assertCompletion(completion, expected);
+    try {
+      await assertCompletion(completion, expected);
+    } catch (error) {
+      await fs.writeFile(path.join(root, "child-output.log"), completion.output, "utf8");
+      throw error;
+    }
 
     // Replay faults against this one completed child, not new fixture executions.
     // The same assertion path must reject incomplete proof even with a good summary.

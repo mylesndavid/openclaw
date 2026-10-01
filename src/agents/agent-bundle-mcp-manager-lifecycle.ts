@@ -123,6 +123,7 @@ function scopedCatalogToolsSignature(tools: readonly McpCatalogTool[]): string {
 export function createSessionMcpRuntimeManagerLifecycle(store: SessionMcpRuntimeManagerStore) {
   let cleanupUncertain = false;
   const schedulers = new Set<GatewayScheduler>();
+  let schedulerScope = store.scheduler.scope();
   const reserveRuntimeSlot = (
     existing: SessionMcpRuntime | undefined,
     hasServers: boolean,
@@ -327,11 +328,11 @@ export function createSessionMcpRuntimeManagerLifecycle(store: SessionMcpRuntime
       clearIdleSweepTimer();
       return;
     }
-    if (store.idleSweepJob || store.scheduler.signal.aborted) {
+    if (store.idleSweepJob || schedulerScope.signal.aborted) {
       return;
     }
     store.idleSweepJob = runInMcpManagerContext(() =>
-      store.scheduler.schedule({
+      schedulerScope.schedule({
         id: "mcp:idle-runtimes",
         atMs: store.scheduler.now() + SESSION_MCP_RUNTIME_SWEEP_INTERVAL_MS,
         everyMs: SESSION_MCP_RUNTIME_SWEEP_INTERVAL_MS,
@@ -353,18 +354,20 @@ export function createSessionMcpRuntimeManagerLifecycle(store: SessionMcpRuntime
     if (scheduler === store.scheduler) {
       return;
     }
-    const previous = store.idleSweepJob;
-    previous?.cancel();
+    const previous = schedulerScope;
+    previous.beginClose();
     if (scheduler) {
       store.scheduler = scheduler;
     }
-    if (previous) {
-      // Keep the cancelled handle installed until its cleanup settles across the handoff.
-      await previous.stop();
-      if (store.idleSweepJob !== previous) {
-        return;
-      }
-      store.idleSweepJob = undefined;
+    const selected = store.scheduler;
+    // The closed scope fences rearming while acquisitions use the successor host.
+    await previous.stop();
+    if (schedulerScope !== previous || store.scheduler !== selected) {
+      return;
+    }
+    store.idleSweepJob = undefined;
+    if (scheduler) {
+      schedulerScope = scheduler.scope();
     }
     ensureIdleSweepTimer();
   };

@@ -23,6 +23,7 @@ import {
   resetGatewayWorkAdmission,
 } from "../src/process/gateway-work-admission.js";
 import { hasOpenClawAgentDatabaseAsyncResources } from "../src/state/openclaw-agent-db-resources.js";
+import { resetJsdomDocumentFocus } from "./jsdom-compat.mjs";
 import {
   type CustomElementTracking,
   dropRepoOwnedCustomElements,
@@ -220,12 +221,7 @@ function resetSharedDocumentBody(): void {
   for (const attribute of body.getAttributeNames()) {
     body.removeAttribute(attribute);
   }
-  // jsdom can retain detached shadow focus even after the fixture removes its DOM.
-  // Focus body to clear it, then blur while focusable to restore fresh-document state.
-  body.tabIndex = -1;
-  body.focus();
-  body.blur();
-  body.removeAttribute("tabindex");
+  resetJsdomDocumentFocus(body.ownerDocument);
 }
 
 function restoreRealTimers(): void {
