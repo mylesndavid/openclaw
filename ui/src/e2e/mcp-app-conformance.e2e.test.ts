@@ -17,12 +17,13 @@ import { getMcpAppViewLease } from "../../../src/agents/mcp-ui-resource.js";
 import { readConfigFileSnapshotWithPluginMetadata } from "../../../src/config/config.js";
 import type { OpenClawConfig } from "../../../src/config/types.openclaw.js";
 import { startGatewayServer } from "../../../src/gateway/server.js";
-import { getGatewayE2ePortBlock } from "../../../src/gateway/test-helpers.e2e.js";
+import { acquireGatewayE2ePortBlock } from "../../../src/gateway/test-helpers.listener.js";
 import { createTestGatewayScheduler } from "../../../src/test-utils/gateway-scheduler-clock.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../../src/test-utils/openclaw-test-state.ts";
+import type { TestPortClaim } from "../../../src/test-utils/port-claims.js";
 import { createControlUiE2eArtifactDir } from "../test-helpers/control-ui-e2e-artifacts.ts";
 import { startControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
 import {
@@ -60,6 +61,8 @@ let runtimeStartup: ReturnType<typeof getOrCreateSessionMcpRuntime> | undefined;
 let mcpScheduler: ReturnType<typeof createTestGatewayScheduler> | undefined;
 let gatewayPort: number;
 let sandboxPort: number;
+// Held until every server bound to these ports has closed.
+const portClaims: TestPortClaim[] = [];
 let tempRoot: string;
 let viewId: string;
 let appAssetServer: HttpServer | undefined;
@@ -127,7 +130,9 @@ const suite = createControlUiE2eSuite({
       state.envVars.OPENCLAW_BUNDLED_PLUGINS_DIR = bundledPluginsDir;
       const appEntryPath = require.resolve("@modelcontextprotocol/ext-apps/app-with-deps");
       const appModuleSource = await fs.readFile(appEntryPath, "utf8");
-      const appAssetPort = await getGatewayE2ePortBlock();
+      const appAssetPortClaim = await acquireGatewayE2ePortBlock();
+      portClaims.push(appAssetPortClaim);
+      const appAssetPort = appAssetPortClaim.port;
       signal.throwIfAborted();
       const fixtureAssetServer = createHttpServer((request, response) => {
         if (request.url === "/history-away") {
@@ -167,11 +172,14 @@ const suite = createControlUiE2eSuite({
         fixtureControlPath,
         fixtureEventsPath,
       );
-      gatewayPort = await getGatewayE2ePortBlock();
-      do {
-        signal.throwIfAborted();
-        sandboxPort = await getGatewayE2ePortBlock();
-      } while (sandboxPort === gatewayPort);
+      const gatewayPortClaim = await acquireGatewayE2ePortBlock();
+      portClaims.push(gatewayPortClaim);
+      gatewayPort = gatewayPortClaim.port;
+      signal.throwIfAborted();
+      // A held claim keeps the sandbox block distinct from the Gateway block.
+      const sandboxPortClaim = await acquireGatewayE2ePortBlock();
+      portClaims.push(sandboxPortClaim);
+      sandboxPort = sandboxPortClaim.port;
       const cfg: OpenClawConfig = {
         gateway: {
           auth: { mode: "token", token: authValue },
@@ -263,6 +271,9 @@ const suite = createControlUiE2eSuite({
             }),
         );
       }
+      await settleCleanup("port claims", async () => {
+        await Promise.all(portClaims.splice(0).map((claim) => claim.release()));
+      });
       if (tempRoot) {
         await settleCleanup("archive fixture events", () =>
           fs.copyFile(fixtureEventsPath, path.join(proofDir, "fixture-events.jsonl")),
