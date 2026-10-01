@@ -51,13 +51,16 @@ function bindings() {
   return { utils, eventTarget, blob, formData, registry, document };
 }
 
-export function resetJsdomDocumentFocus(document: Document): void {
+export function clearJsdomViewportFocus(document: Document): void {
   const impl = bindings().document.convert(globalThis, document);
-  // blur() focuses the viewport in jsdom 30.1.1; shared files need a fresh document's state.
+  // blur() focuses the viewport in jsdom 30.1.1; preserve element focus and clear only that viewport.
   // oxlint-disable-next-line eslint/no-underscore-dangle -- jsdom owns this implementation member name.
-  impl._lastFocusedElement = null;
-  // oxlint-disable-next-line eslint/no-underscore-dangle -- jsdom owns this implementation member name.
-  impl._clearDOMSelector();
+  if (impl._lastFocusedElement === impl) {
+    // oxlint-disable-next-line eslint/no-underscore-dangle -- jsdom owns this implementation member name.
+    impl._lastFocusedElement = null;
+    // oxlint-disable-next-line eslint/no-underscore-dangle -- jsdom owns this implementation member name.
+    impl._clearDOMSelector();
+  }
 }
 
 export function jsdomCustomElementDefinitions(registry: object) {

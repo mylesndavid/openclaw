@@ -16,6 +16,7 @@ import { agentReaderFixtureFiles } from "./non-isolated-runner.agent-reader-fixt
 import { gatewayWorkerLifetimeFixtureFiles } from "./non-isolated-runner.gateway-lifecycle-fixtures.ts";
 import { mcpManagerFixtureFiles } from "./non-isolated-runner.mcp-fixtures.ts";
 import { mockResolutionFixtureFiles } from "./non-isolated-runner.mock-resolution-fixtures.ts";
+import { skillsWatcherFixtureFiles } from "./non-isolated-runner.skills-watcher-fixtures.ts";
 import { testApiLifecycleFixtureFiles } from "./non-isolated-runner.test-api-fixtures.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -116,8 +117,13 @@ import { expect, vi, type RunnerTestFile } from "vitest";
 const resetModules = vi.resetModules;
 export default class FixtureRunner extends Runner {
   override async onAfterRunFiles(files: RunnerTestFile[]) {
-    const cleanup = files.some(file => file.filepath.endsWith("99-mcp-b-retained-owner.test.ts"))
-      ? (await import(${JSON.stringify(path.join(repoRoot, "test", "non-isolated-runner.ts") + "?mcp-retirement-generation")})).default.prototype.onAfterRunFiles
+    const generation = files.some(file => file.filepath.endsWith("12-a-skills-watcher-leak.test.ts"))
+      ? "?skills-watcher-generation"
+      : files.some(file => file.filepath.endsWith("99-mcp-b-retained-owner.test.ts"))
+        ? "?mcp-retirement-generation"
+        : undefined;
+    const cleanup = generation
+      ? (await import(${JSON.stringify(path.join(repoRoot, "test", "non-isolated-runner.ts"))} + generation)).default.prototype.onAfterRunFiles
       : Runner.prototype.onAfterRunFiles;
     await cleanup.call(this, files);
     expect(vi.resetModules, "file cleanup restores the native module reset").toBe(resetModules);
@@ -440,6 +446,7 @@ it("reloads the redirected mock after a real import", () => {
     ...testApiLifecycleFixtureFiles(repoRoot),
     ...documentFocusFixtureFiles(),
     ...agentReaderFixtureFiles(repoRoot, fixtureRoot),
+    ...skillsWatcherFixtureFiles(repoRoot, fixtureRoot),
   };
 }
 
@@ -479,7 +486,7 @@ async function assertCompletion(
     pid: expected.pid,
     root: expected.root,
     processTimedOut: false,
-    ended: { reason: "failed", unhandledErrors: 0, failedModules: 5, suiteErrors: 5 },
+    ended: { reason: "failed", unhandledErrors: 0, failedModules: 6, suiteErrors: 6 },
   });
   const project = {
     name: "non-isolated-runner",
@@ -496,8 +503,8 @@ async function assertCompletion(
 
   expect(report.testResults.map((file) => file.name).toSorted()).toEqual(expected.files);
   expect(report).toMatchObject({
-    numTotalTests: 66,
-    numPassedTests: 65,
+    numTotalTests: 68,
+    numPassedTests: 67,
     numPendingTests: 1,
     numFailedTests: 0,
     numTodoTests: 0,
@@ -505,6 +512,7 @@ async function assertCompletion(
   for (const file of report.testResults) {
     const name = path.basename(file.name);
     const crashed = name === "01-a-crash.test.ts";
+    const leakedWatchers = name === "12-a-skills-watcher-leak.test.ts";
     const uncertainMcp =
       name === "99-mcp-a-uncertain-owner.test.ts" || name === "98-mcp-c-prior-failure.test.ts";
     const mockedMcpDisposer = name === "98-mcp-a-direct-disposer.test.ts";
@@ -515,9 +523,15 @@ async function assertCompletion(
     );
     const count = crashed ? 0 : lifecycle ? 2 : 1;
     expect(file.status, name).toBe(
-      crashed || uncertainMcp || mockedMcpDisposer || failedRunCancellation ? "failed" : "passed",
+      crashed || leakedWatchers || uncertainMcp || mockedMcpDisposer || failedRunCancellation
+        ? "failed"
+        : "passed",
     );
-    if (uncertainMcp || mockedMcpDisposer) {
+    if (leakedWatchers) {
+      expect(file.message, name).toMatch(
+        /^12-a-skills-watcher-leak\.test\.ts: skills watchers failed\nError: left skills watchers open /u,
+      );
+    } else if (uncertainMcp || mockedMcpDisposer) {
       expect(file.message).toContain("MCP runtime custody failed");
       expect(file.message).toContain(
         uncertainMcp
@@ -715,6 +729,16 @@ export default defineConfig({
             { message: "other" },
           ),
       ],
+      [
+        "unattributed skills watcher leak",
+        ({ report }) =>
+          Object.assign(
+            report.testResults.find((file) =>
+              file.name.endsWith("/12-a-skills-watcher-leak.test.ts"),
+            )!,
+            { status: "passed", message: "" },
+          ),
+      ],
       ["inconsistent totals", ({ report }) => Object.assign(report, { numPassedTests: 44 })],
     ];
     for (const patch of [
@@ -732,10 +756,10 @@ export default defineConfig({
       { reason: "interrupted" },
       { reason: "passed" },
       { unhandledErrors: 1 },
-      { failedModules: 0 },
-      { failedModules: 6 },
-      { suiteErrors: 0 },
-      { suiteErrors: 6 },
+      { failedModules: 5 },
+      { failedModules: 7 },
+      { suiteErrors: 5 },
+      { suiteErrors: 7 },
     ]) {
       faults.push([
         `invalid native end: ${JSON.stringify(patch)}`,
