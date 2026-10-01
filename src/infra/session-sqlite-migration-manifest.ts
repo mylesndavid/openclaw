@@ -98,21 +98,12 @@ const MigrationTargetSchema = z
   })
   .superRefine((target, context) => {
     if (
-      target.databaseIdentity &&
-      (target.storePath !== target.sqlitePath ||
-        [...target.plannedMoves, ...target.completedMoves].some(
-          (move) => move.kind !== "database-backup",
-        ))
-    ) {
-      context.addIssue({ code: "custom", message: "invalid database backup target" });
-    }
-    if (
-      !target.databaseIdentity &&
+      (target.databaseIdentity && target.storePath !== target.sqlitePath) ||
       [...target.plannedMoves, ...target.completedMoves].some(
-        (move) => move.kind === "database-backup",
+        (move) => (move.kind === "database-backup") !== Boolean(target.databaseIdentity),
       )
     ) {
-      context.addIssue({ code: "custom", message: "database backup requires source identity" });
+      context.addIssue({ code: "custom", message: "invalid database backup target" });
     }
     const plannedMoveKeys = new Set<string>();
     for (const move of target.plannedMoves) {

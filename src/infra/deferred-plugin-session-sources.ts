@@ -442,10 +442,10 @@ export function retireDeferredPluginSessionImport(
     completedPluginIds?: readonly string[];
     assertCurrent?: () => void;
   },
-): boolean {
+): void {
   const receipt = readSessionImportReceipt(params);
   if (!receipt) {
-    return false;
+    return;
   }
   const recorded = receiptSchema.parse(JSON.parse(receipt.reportJson));
   const expectedPending = readDeferredPluginMigrations({ env: params.env });
@@ -456,15 +456,15 @@ export function retireDeferredPluginSessionImport(
         !params.completedPluginIds?.includes(pending.pluginId),
     )
   ) {
-    return false;
+    return;
   }
   if (
     statMigrationPath(params.target.storePath) ||
     recorded.sources.some((source) => statMigrationPath(source.path))
   ) {
-    return false;
+    return;
   }
-  return runOpenClawStateWriteTransaction(
+  runOpenClawStateWriteTransaction(
     ({ db }) =>
       withDeferredPluginMigrationsCurrent({ env: params.env, expectedPending }, () => {
         params.assertCurrent?.();
@@ -475,11 +475,10 @@ export function retireDeferredPluginSessionImport(
           statMigrationPath(params.target.storePath) ||
           recorded.sources.some((source) => statMigrationPath(source.path))
         ) {
-          return false;
+          return;
         }
         readDeferredPluginSessionImport({ ...params, database: db });
         markLegacyMigrationSourceRemovedInDatabase(db, receipt.sourceKey);
-        return true;
       }),
     { env: params.env },
     { operationLabel: "state.retire-plugin-session-source" },

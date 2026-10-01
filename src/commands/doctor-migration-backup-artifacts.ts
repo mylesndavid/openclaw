@@ -90,20 +90,16 @@ export function completeDoctorMigrationBackups(
       !manifest ||
       manifest.completedAt ||
       !manifest.targets.length ||
-      !manifest.targets.every(
-        (target) => target.databaseIdentity && verified.has(target.sqlitePath),
-      )
-    ) {
-      continue;
-    }
-    if (
-      !manifest.targets.every((target) => {
-        const current = fs.lstatSync(target.sqlitePath, { bigint: true, throwIfNoEntry: false });
+      !manifest.targets.every(({ databaseIdentity, sqlitePath }) => {
+        if (!databaseIdentity || !verified.has(sqlitePath)) {
+          return false;
+        }
+        const current = fs.lstatSync(sqlitePath, { bigint: true, throwIfNoEntry: false });
         return (
           current?.isFile() &&
           current.nlink === 1n &&
-          String(current.dev) === target.databaseIdentity!.dev &&
-          String(current.ino) === target.databaseIdentity!.ino
+          String(current.dev) === databaseIdentity.dev &&
+          String(current.ino) === databaseIdentity.ino
         );
       })
     ) {

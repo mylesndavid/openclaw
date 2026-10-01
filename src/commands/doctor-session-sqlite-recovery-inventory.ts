@@ -402,25 +402,18 @@ export function protectRecoveryDependencies(
     paths.add(to);
     dependents.set(from, paths);
   };
-  const backupGroups = new Map<string, string[]>();
+  const backupGroups = new Map<string, string>();
   for (const [archive, references] of refs) {
     for (const ref of references.filter(active)) {
       if (ref.target.databaseIdentity) {
-        const group = backupGroups.get(ref.run.manifestPath) ?? [];
-        group.push(archive);
-        backupGroups.set(ref.run.manifestPath, group);
+        const sibling = backupGroups.get(ref.run.manifestPath);
+        if (sibling) {
+          connect(archive, sibling);
+          connect(sibling, archive);
+        } else {
+          backupGroups.set(ref.run.manifestPath, archive);
+        }
       }
-    }
-  }
-  for (const group of backupGroups.values()) {
-    for (const archive of group) {
-      for (const sibling of group) {
-        connect(archive, sibling);
-      }
-    }
-  }
-  for (const [archive, references] of refs) {
-    for (const ref of references.filter(active)) {
       const dependencies =
         (ref.move.artifact ?? adoptions?.get(ref))?.dependencies ??
         (ref.move.kind === "legacy-store"

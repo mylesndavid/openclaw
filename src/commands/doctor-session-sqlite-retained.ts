@@ -125,15 +125,12 @@ export async function prepareRetainedSessionImport(
     try {
       if (params.mode === "import" || params.mode === "recover") {
         retireDeferredPluginSessionImport(sourceVerification);
-      }
-      if (
-        (params.mode === "import" || params.mode === "recover") &&
-        (await rebuildDeferredPluginSessionSourceIndex(sourceVerification))
-      ) {
-        issues.push({
-          code: "retained_plugin_source_index_rebuilt",
-          message: `Rebuilt the verified source index and database binding from the deferred import receipt: ${params.target.storePath}. Canonical SQLite sessions were not replayed.`,
-        });
+        if (await rebuildDeferredPluginSessionSourceIndex(sourceVerification)) {
+          issues.push({
+            code: "retained_plugin_source_index_rebuilt",
+            message: `Rebuilt the verified source index and database binding from the deferred import receipt: ${params.target.storePath}. Canonical SQLite sessions were not replayed.`,
+          });
+        }
       }
       retainedImport = readDeferredPluginSessionImport(sourceVerification);
     } catch (error) {
