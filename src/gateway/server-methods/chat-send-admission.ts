@@ -82,6 +82,7 @@ export async function admitChatSend(
   params.assertCurrent?.();
   const { request, session, respond, context, client } = params;
   const { p, explicitOrigin, normalizedAttachments, turnKind } = request;
+  const requestIdentity = request.goalOperation?.requestFingerprint ?? request.requestIdentity;
   const progressRefresh = isProgressCardRefreshInputProvenance(request.systemInputProvenance);
   const {
     rawSessionKey,
@@ -168,7 +169,7 @@ export async function admitChatSend(
   context.dedupe.set(pendingChatSendKey, {
     ts: now,
     ok: true,
-    requestIdentity: request.requestIdentity,
+    requestIdentity,
     payload: {
       runId: clientRunId,
       attemptId: pendingAttemptId,
@@ -447,7 +448,6 @@ export async function admitChatSend(
     return { ok: false as const };
   }
   if (
-    !request.goalOperation &&
     admittedRunAbort?.registered &&
     !reservationSuperseded &&
     !readChatSendDedupeResponse(context.dedupe, clientRunId)
@@ -457,7 +457,7 @@ export async function admitChatSend(
     context.dedupe.set(`chat:${clientRunId}`, {
       ts: Date.now(),
       ok: true,
-      requestIdentity: request.requestIdentity,
+      requestIdentity,
     });
   }
   clearPendingChatSendReservation();

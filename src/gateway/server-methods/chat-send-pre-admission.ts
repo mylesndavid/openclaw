@@ -351,9 +351,14 @@ export function inspectGoalChatSendRetry({
       entry: context.dedupe.get(pendingChatSendKey),
       keyPrefix: PENDING_CHAT_SEND_DEDUPE_PREFIX,
     });
+    const retainedIdentity = context.dedupe.get(`chat:${clientRunId}`)?.requestIdentity;
+    const identityConflict =
+      retainedIdentity !== undefined &&
+      retainedIdentity !== request.goalOperation.requestFingerprint;
     if (
-      pending?.payload.goalFingerprint === request.goalOperation.requestFingerprint ||
-      (!pending && !durableClaimAccepted && context.chatAbortControllers.has(clientRunId))
+      !identityConflict &&
+      (pending?.payload.goalFingerprint === request.goalOperation.requestFingerprint ||
+        (!pending && !durableClaimAccepted && context.chatAbortControllers.has(clientRunId)))
     ) {
       respond(
         false,
@@ -365,9 +370,10 @@ export function inspectGoalChatSendRetry({
       return { kind: "settled" } as const;
     }
     if (
+      identityConflict ||
       pending ||
       durableClaimAccepted ||
-      context.dedupe.has(`chat:${clientRunId}`) ||
+      readChatSendDedupeResponse(context.dedupe, clientRunId) ||
       context.chatRunState.hasAbortMarker(clientRunId) ||
       context.chatAbortControllers.has(clientRunId) ||
       context.chatQueuedTurns?.has(clientRunId)
