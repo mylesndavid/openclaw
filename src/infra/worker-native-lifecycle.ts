@@ -94,7 +94,9 @@ function closeNativeBroker(source: NativeSource): Promise<void> {
   try {
     return source.broker?.close() ?? Promise.resolve();
   } catch (error) {
-    return Promise.reject(error);
+    const failed = createDeferredCore();
+    failed.reject(error);
+    return failed.promise;
   }
 }
 
