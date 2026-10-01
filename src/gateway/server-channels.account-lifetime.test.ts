@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
+import { createDeferred, withinTest } from "../../test/helpers/promise.js";
 import type { ChannelGatewayContextV2 } from "../channels/plugins/types.adapters.js";
 import { registerPluginHttpRoute } from "../plugins/http-registry.js";
 import { resetGatewayWorkAdmission } from "../process/gateway-work-admission.js";
@@ -95,8 +95,11 @@ describe("channel account scheduling lifetime", () => {
     }
   });
 
-  it("joins account scheduled work at retirement without stopping a sibling", async () => {
+  it("joins account scheduled work at retirement without stopping a sibling", async ({
+    signal,
+  }) => {
     const clock = createGatewaySchedulerClock();
+    const siblingRearmed = createDeferred<void>();
     const work = createDeferred<void>();
     const contexts = new Map<string, ChannelGatewayContextV2<TestAccount>>();
     const ran = vi.fn<(accountId: string) => void>();
@@ -124,15 +127,26 @@ describe("channel account scheduling lifetime", () => {
     );
     const manager = createTestChannelManager({
       getPluginRegistry: () => registry,
-      scheduler: createTestGatewayScheduler(clock.clock),
+      scheduler: createTestGatewayScheduler({
+        ...clock.clock,
+        arm(run, delayMs) {
+          const cancel = clock.clock.arm(run, delayMs);
+          if (clock.armedAtMs === 20) {
+            siblingRearmed.resolve();
+          }
+          return cancel;
+        },
+      }),
     });
+    let running: ReturnType<typeof clock.advanceBy> = undefined;
+    let stopping: Promise<void> | undefined;
     try {
       await manager.startChannels();
       await flushMicrotasks();
-      const running = clock.advanceBy(10);
+      running = clock.advanceBy(10);
       expect(ran.mock.calls).toEqual([["first"], ["second"]]);
       let stopped = false;
-      const stopping = manager.stopChannel("discord", "first").then(() => {
+      stopping = manager.stopChannel("discord", "first").then(() => {
         stopped = true;
       });
       await flushMicrotasks();
@@ -140,6 +154,7 @@ describe("channel account scheduling lifetime", () => {
       expect(contexts.get("second")?.scheduler.signal.aborted).toBe(false);
       expect(stopAccount).toHaveBeenCalledOnce();
       expect(stopped).toBe(false);
+      await withinTest(siblingRearmed.promise, signal);
       await clock.advanceBy(10);
       expect(ran.mock.calls).toEqual([["first"], ["second"], ["second"]]);
       work.resolve();
@@ -157,6 +172,7 @@ describe("channel account scheduling lifetime", () => {
       await manager.stopChannel("discord", "second");
     } finally {
       work.resolve();
+      await Promise.allSettled([running, stopping]);
       await manager.stopChannel("discord");
     }
   });

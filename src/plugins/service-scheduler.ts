@@ -3,14 +3,19 @@ import type { GatewayScheduler } from "../infra/gateway-scheduler.js";
 import { runInDetachedAsyncContext } from "../shared/async-work-scope.js";
 import type { PluginServiceSchedulerV1 } from "./service-scheduler.types.js";
 
+export type PluginServiceSchedulerOwner = {
+  scheduler: PluginServiceSchedulerV1;
+  close: () => Promise<void> | undefined;
+};
+
 export function createPluginServiceScheduler(
   scheduler: GatewayScheduler,
   runOwned?: (run: () => void | Promise<unknown>) => void | Promise<unknown>,
-): PluginServiceSchedulerV1 {
-  const createScope = (parent?: Set<PluginServiceSchedulerV1>): PluginServiceSchedulerV1 => {
+): PluginServiceSchedulerOwner {
+  const createScope = (parent?: Set<PluginServiceSchedulerOwner>): PluginServiceSchedulerOwner => {
     const owner = scheduler.scope();
     const prefix = `plugin-service:${randomUUID()}:`;
-    const children = new Set<PluginServiceSchedulerV1>();
+    const children = new Set<PluginServiceSchedulerOwner>();
     let stopping: Promise<void> | undefined;
     const assertOpen = () => {
       if (owner.signal.aborted) {
@@ -20,8 +25,22 @@ export function createPluginServiceScheduler(
     const beginClose = () => {
       owner.beginClose();
       for (const child of children) {
-        child.beginClose();
+        child.scheduler.beginClose();
       }
+    };
+    const close = (): Promise<void> | undefined => {
+      beginClose();
+      const pending = [owner.close(), ...Array.from(children, (child) => child.close())].filter(
+        (completion) => completion !== undefined,
+      );
+      if (pending.length === 0) {
+        parent?.delete(control);
+        return undefined;
+      }
+      stopping ??= Promise.all(pending)
+        .then(() => undefined)
+        .finally(() => parent?.delete(control));
+      return stopping;
     };
     const scope: PluginServiceSchedulerV1 = {
       version: 1,
@@ -41,18 +60,13 @@ export function createPluginServiceScheduler(
         assertOpen();
         const child = createScope(children);
         children.add(child);
-        return child;
+        return child.scheduler;
       },
       beginClose,
-      stop: () => {
-        beginClose();
-        stopping ??= Promise.all([owner.stop(), ...Array.from(children, (child) => child.stop())])
-          .then(() => undefined)
-          .finally(() => parent?.delete(scope));
-        return stopping;
-      },
+      stop: () => (stopping ??= Promise.resolve(close())),
     };
-    return scope;
+    const control: PluginServiceSchedulerOwner = { scheduler: scope, close };
+    return control;
   };
   return createScope();
 }

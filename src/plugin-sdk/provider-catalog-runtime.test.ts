@@ -230,7 +230,7 @@ it.each([false, true])(
           instance: getPluginInstance(record),
           lease,
         }),
-      );
+      ).scheduler;
     const foreignResolver = () => undefined;
     bindLegacyPluginSdkResourceHost(foreignResolver, foreign);
     const scheduler = host.run(() =>

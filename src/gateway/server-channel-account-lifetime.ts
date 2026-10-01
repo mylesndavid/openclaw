@@ -37,7 +37,7 @@ export function createChannelAccountLifetime(
   const abort = new AbortController();
   const capabilityLease = createPluginRuntimeCapabilityLease("channel account");
   const instance = getPluginValueInstance(plugin);
-  const scheduler = createPluginServiceScheduler(
+  const { scheduler } = createPluginServiceScheduler(
     rootScheduler,
     createPluginServiceSchedulerRunner({
       registry,
@@ -80,7 +80,7 @@ export async function runChannelAccountStop(params: {
             resolveChannelAccount({ plugin, cfg, accountId }),
           );
           params.lease.assertActive("account resolution");
-          const scheduler = createPluginServiceScheduler(params.rootScheduler);
+          const { scheduler } = createPluginServiceScheduler(params.rootScheduler);
           await scheduler.stop();
           teardown = {
             context: params.createFallbackContext(account, scheduler),

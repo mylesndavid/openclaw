@@ -9,13 +9,13 @@ import { createPluginServiceScheduler } from "./service-scheduler.js";
 function fixture() {
   const time = createGatewaySchedulerClock(1_000);
   const gateway = createTestGatewayScheduler(time.clock);
-  return { time, gateway, owner: createPluginServiceScheduler(gateway) };
+  return { time, gateway, owner: createPluginServiceScheduler(gateway).scheduler };
 }
 
 describe("plugin service scheduling", () => {
   it("replaces IDs only within their service or child lifetime", async () => {
     const { time, gateway, owner } = fixture();
-    const sibling = createPluginServiceScheduler(gateway);
+    const { scheduler: sibling } = createPluginServiceScheduler(gateway);
     const child = owner.scope();
     const seen: string[] = [];
     const schedule = (scope: typeof owner, name: string) =>

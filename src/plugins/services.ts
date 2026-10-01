@@ -28,8 +28,10 @@ import { createPluginServiceDiagnostics } from "./service-diagnostics.js";
 import { createPluginServiceHealthReporter } from "./service-health.js";
 import { createPluginServiceNodeInvoker } from "./service-nodes.js";
 import { createPluginServiceSchedulerRunner } from "./service-scheduler-context.js";
-import { createPluginServiceScheduler } from "./service-scheduler.js";
-import type { PluginServiceSchedulerV1 } from "./service-scheduler.types.js";
+import {
+  createPluginServiceScheduler,
+  type PluginServiceSchedulerOwner,
+} from "./service-scheduler.js";
 import { encodeStartupTraceSegment } from "./startup-trace-segment.js";
 import type { OpenClawPluginServiceContext, OpenClawPluginServiceContextV2 } from "./types.js";
 
@@ -98,7 +100,7 @@ type OwnedPluginService = {
   stopNodeInvocations?: () => void;
   health: NonNullable<OpenClawPluginServiceContext["serviceHealth"]>;
   lease: PluginRuntimeCapabilityLease;
-  scheduler: PluginServiceSchedulerV1;
+  scheduling: PluginServiceSchedulerOwner;
 };
 
 type PluginServicesOwner = {
@@ -235,7 +237,7 @@ async function startPreparedPluginServices({
     beforeStop?: Promise<unknown>,
   ) => {
     entry.stopRequested = true;
-    entry.scheduler.beginClose();
+    entry.scheduling.scheduler.beginClose();
     entry.stopNodeInvocations?.();
     const recordFailure = (error: unknown) => {
       if (!failures) {
@@ -266,24 +268,45 @@ async function startPreparedPluginServices({
       );
     };
     try {
-      const invokeStop = async () => {
+      const invokeStop = () => {
         const record = entry.registry.plugins.find((candidate) => candidate.id === entry.pluginId);
         const stopRegistry = record
           ? getPluginRecordRegistry(entry.registry, record)
           : entry.registry;
-        const stop = async () =>
-          withPluginHttpRouteRegistry(stopRegistry, () => entry.stop?.(), entry.lease);
+        let cleanup:
+          | { status: "fulfilled"; value: unknown }
+          | { status: "rejected"; reason: unknown };
+        try {
+          cleanup = {
+            status: "fulfilled",
+            value: withPluginHttpRouteRegistry(stopRegistry, () => entry.stop?.(), entry.lease),
+          };
+        } catch (error) {
+          cleanup = { status: "rejected", reason: error };
+        }
         // Stop can abort transport work or flush ingress needed by a scheduled callback.
-        const settled = await Promise.allSettled([stop(), entry.scheduler.stop()]);
-        const errors = settled.flatMap((result) =>
-          result.status === "rejected" ? [result.reason] : [],
-        );
-        if (errors.length === 1) {
-          throw errors[0];
+        const scheduled = entry.scheduling.close();
+        if (!scheduled) {
+          // An idle scheduler must not add promise turns to the hook's observer deadline.
+          if (cleanup.status === "rejected") {
+            throw cleanup.reason;
+          }
+          return cleanup.value;
         }
-        if (errors.length > 1) {
-          throw new AggregateError(errors, "Plugin service retirement failed");
-        }
+        return Promise.allSettled([
+          cleanup.status === "fulfilled" ? cleanup.value : Promise.reject(cleanup.reason),
+          scheduled,
+        ]).then((settled) => {
+          const errors = settled.flatMap((result) =>
+            result.status === "rejected" ? [result.reason] : [],
+          );
+          if (errors.length === 1) {
+            throw errors[0];
+          }
+          if (errors.length > 1) {
+            throw new AggregateError(errors, "Plugin service retirement failed");
+          }
+        });
       };
       const cleanup = () => {
         if (!entry.stopping) {
@@ -410,7 +433,7 @@ async function startPreparedPluginServices({
         for (const entry of selected) {
           entry.reloading = reloading;
           entry.stopRequested = true;
-          entry.scheduler.beginClose();
+          entry.scheduling.scheduler.beginClose();
           entry.stopNodeInvocations?.();
         }
         const failures: unknown[] = [];
@@ -456,7 +479,7 @@ async function startPreparedPluginServices({
       );
       for (const entry of selected) {
         entry.stopRequested = true;
-        entry.scheduler.beginClose();
+        entry.scheduling.scheduler.beginClose();
         entry.stopNodeInvocations?.();
       }
       const strict = options?.strict === true;
@@ -498,7 +521,7 @@ async function startPreparedPluginServices({
     const { health, revoke } = createPluginServiceHealthReporter(entry);
     lease.retain(revoke);
     const runtime = getPluginRegistryRuntime(registry);
-    const serviceScheduler = createPluginServiceScheduler(
+    const scheduling = createPluginServiceScheduler(
       scheduler,
       createPluginServiceSchedulerRunner({ registry, record, instance, lease }),
     );
@@ -526,7 +549,7 @@ async function startPreparedPluginServices({
     const scopeTraceName = (name: string) =>
       `${traceName}.${name.split(".").map(encodeStartupTraceSegment).join(".")}`;
     const serviceContext: OpenClawPluginServiceContextV2 = {
-      scheduler: serviceScheduler,
+      scheduler: scheduling.scheduler,
       config,
       workspaceDir,
       stateDir: STATE_DIR,
@@ -592,7 +615,7 @@ async function startPreparedPluginServices({
         : undefined,
       health,
       lease,
-      scheduler: serviceScheduler,
+      scheduling,
     };
     // Retry in place. A new registration is inserted before retained later declarations,
     // so transfer cannot reorder a dependency behind its already-running consumer.
