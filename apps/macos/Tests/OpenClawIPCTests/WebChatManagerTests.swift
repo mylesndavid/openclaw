@@ -130,7 +130,7 @@ extension WebChatManagerTests {
                 viewModel: vm, query: .constant(""), groups: .constant([]),
                 previews: ChatSessionSidebarPreviews(), menuActions: commands.sessionMenuActions)
             func makeMenu() -> NSMenu {
-                let menu = NSHostingMenu(rootView: sidebar.contextMenu(for: row))
+                let menu = NSHostingMenu(rootView: sidebar.contextMenu(for: row, isChild: false))
                 menu.update()
                 return menu
             }
