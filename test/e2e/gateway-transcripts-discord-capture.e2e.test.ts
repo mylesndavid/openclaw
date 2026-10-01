@@ -481,13 +481,16 @@ describe("Gateway admitted Discord transcript capture", () => {
       const cfg: OpenClawConfig = {
         skills: { load: { watch: false } },
         agents: {
-          list: [
-            { id: "main", default: true, workspace },
-            { id: "agent-b", workspace },
-          ],
+          ownership: "explicit",
+          entries: {
+            main: { workspace },
+            "agent-b": { workspace },
+          },
           defaults: {
             workspace,
             skipBootstrap: true,
+            systemAgent: { agentId: "main" },
+            sessionStore: { agentId: "main" },
             heartbeat: { every: "0m" },
             model: { primary: provider.modelRef, fallbacks: [] },
             models: {
@@ -498,6 +501,7 @@ describe("Gateway admitted Discord transcript capture", () => {
             },
           },
         },
+        talk: { agentId: "main" },
         bindings: [
           {
             agentId: "main",
@@ -507,6 +511,7 @@ describe("Gateway admitted Discord transcript capture", () => {
               peer: { kind: "channel", id: captureTarget.channelId },
             },
           },
+          { agentId: "main", match: { channel: "discord", accountId: "*" } },
         ],
         channels: {
           discord: {
