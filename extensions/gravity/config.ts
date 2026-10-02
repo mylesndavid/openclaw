@@ -1,10 +1,10 @@
 export const PROVIDER_ID = "gravity";
 export const ENV_VAR = "GRAVITY_API_KEY";
 export const DEFAULT_MODEL_REF = "gravity/free-default";
-/** Browser/device-authorization front door. This host never receives model requests. */
+/** Browser/device-authorization front door, configured independently of model requests. */
 export const DEFAULT_ACCOUNT_URL = "https://openclaw.trygravity.ai";
 /** OpenAI-compatible inference and Gravity Index API consumed by provider registration. */
-export const DEFAULT_MODEL_BASE_URL = "https://llm.trygravity.ai/v1";
+export const DEFAULT_MODEL_BASE_URL = "https://openclaw.trygravity.ai/v1";
 
 type ConfigLike =
   | {
@@ -41,7 +41,7 @@ export function resolveGravityApiBaseUrl(config: ConfigLike, explicit?: string):
   return raw.endsWith("/v1") ? raw : `${raw}/v1`;
 }
 
-/** Inference/Index service root without `/v1`; never falls back to the account host. */
+/** Inference/Index service root without `/v1`, independent of the account URL override. */
 export function resolveGravityRootUrl(config: ConfigLike, explicit?: string): string {
   return resolveGravityApiBaseUrl(config, explicit).slice(0, -3);
 }

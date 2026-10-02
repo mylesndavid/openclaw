@@ -28,7 +28,7 @@ describe("static fallback catalog (before the live /v1/catalog lands)", () => {
     const def = cfg.models.find((m) => m.id === "free-default");
     assert.ok(def, "free-default is in the static catalog");
     assert.equal(def.name, "Free (Ad-supported)");
-    assert.equal(cfg.baseUrl, "https://llm.trygravity.ai/v1");
+    assert.equal(cfg.baseUrl, "https://openclaw.trygravity.ai/v1");
     assert.equal(cfg.api, "openai-completions");
     assert.equal(def.api, "openai-completions");
     assert.ok(

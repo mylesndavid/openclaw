@@ -16,7 +16,7 @@ The plugin never exposes the install credential to the browser. Gravity hands it
 
 The user-facing product name is intentionally retained, but this contribution contains only free inference, account setup, usage, and the provider-gated Gravity Index tool.
 
-Hosted account and device approval lives at `https://openclaw.trygravity.ai`. The model provider is registered separately at `models.providers.gravity.baseUrl`; its production default and the one-time token response both use `https://llm.trygravity.ai/v1`. Model and Index requests never fall back to the account site's host.
+Hosted account and device approval lives at `https://openclaw.trygravity.ai`. The model provider is registered separately at `models.providers.gravity.baseUrl`; its production default and the one-time token response both use `https://openclaw.trygravity.ai/v1`. Custom account URL overrides do not change the model and Index endpoint.
 
 ## Sign in
 

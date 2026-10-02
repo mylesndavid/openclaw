@@ -26,7 +26,7 @@ Successful sign-in:
 
 - selects `gravity/free-default`;
 - configures the model endpoint returned by the token response, with
-  `https://llm.trygravity.ai/v1` as the safe fallback; and
+  `https://openclaw.trygravity.ai/v1` as the safe fallback; and
 - uses Chat Completions for current chat-only models. A future catalog model
   advertising Responses support keeps its own Responses transport.
 
@@ -52,7 +52,7 @@ the product choice name; ad delivery is outside this OpenClaw integration.
 
 ## Custom endpoints
 
-The account and inference endpoints are intentionally separate:
+The account and inference endpoints are configured independently:
 
 ```bash
 openclaw config set plugins.entries.gravity.config.accountUrl https://accounts.example

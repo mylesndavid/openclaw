@@ -25,15 +25,15 @@ afterEach(() => {
 });
 
 describe("Gravity account and inference endpoints", () => {
-  it("keeps hosted device auth separate from the model provider base URL", () => {
+  it("uses the hosted account service with /v1 for model inference", () => {
     delete process.env.GRAVITY_ACCOUNT_URL;
     delete process.env.GRAVITY_MODEL_BASE_URL;
 
     assert.equal(resolveGravityAccountUrl(undefined), DEFAULT_ACCOUNT_URL);
     assert.equal(DEFAULT_ACCOUNT_URL, "https://openclaw.trygravity.ai");
     assert.equal(resolveGravityApiBaseUrl(undefined), DEFAULT_MODEL_BASE_URL);
-    assert.equal(DEFAULT_MODEL_BASE_URL, "https://llm.trygravity.ai/v1");
-    assert.equal(resolveGravityRootUrl(undefined), "https://llm.trygravity.ai");
+    assert.equal(DEFAULT_MODEL_BASE_URL, "https://openclaw.trygravity.ai/v1");
+    assert.equal(resolveGravityRootUrl(undefined), "https://openclaw.trygravity.ai");
   });
 
   it("reads inference from the OpenClaw model-provider config shape", () => {

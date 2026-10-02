@@ -99,7 +99,7 @@
     {
       "endpointClass": "custom",
       "baseUrls": [
-        "https://llm.trygravity.ai/v1"
+        "https://openclaw.trygravity.ai/v1"
       ]
     }
   ]
